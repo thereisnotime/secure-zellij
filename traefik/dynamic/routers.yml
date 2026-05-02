@@ -1,7 +1,7 @@
 http:
   routers:
     zellij:
-      rule: "Host(`{{ env "DOMAIN" }}`)"
+      rule: "Host(`ZELLIJ_DOMAIN`)"
       entryPoints:
         - websecure
       service: zellij
@@ -17,5 +17,5 @@ http:
     zellij:
       loadBalancer:
         servers:
-          - url: "http://host.containers.internal:8082"
+          - url: "http://127.0.0.1:8082"
         passHostHeader: true

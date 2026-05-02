@@ -3,21 +3,19 @@ services:
     image: traefik:v3.6.15
     container_name: secure-zellij-traefik
     restart: unless-stopped
-    ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
-    extra_hosts:
-      - "host.containers.internal:host-gateway"
+    network_mode: host
+    entrypoint: ["/entrypoint.sh"]
     volumes:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/dynamic:/etc/traefik/dynamic:ro
+      - ./traefik/entrypoint.sh:/entrypoint.sh:ro
       - traefik-logs:/var/log/traefik
       - letsencrypt:/letsencrypt
     environment:
       - DOMAIN=${DOMAIN}
       - ACME_EMAIL=${ACME_EMAIL:-}
-    networks:
-      - proxy
+      - HTTP_PORT=${HTTP_PORT:-8080}
+      - HTTPS_PORT=${HTTPS_PORT:-8443}
     healthcheck:
       test: ["CMD", "traefik", "healthcheck"]
       interval: 30s

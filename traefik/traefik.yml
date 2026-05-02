@@ -4,7 +4,7 @@ api:
 
 entryPoints:
   web:
-    address: ":80"
+    address: ":8080"
     http:
       redirections:
         entryPoint:
@@ -12,13 +12,13 @@ entryPoints:
           scheme: https
           permanent: true
   websecure:
-    address: ":443"
+    address: ":8443"
     http:
       tls: {}
 
 providers:
   file:
-    directory: /etc/traefik/dynamic
+    directory: /etc/traefik/dynamic-live
     watch: true
 
 log:
