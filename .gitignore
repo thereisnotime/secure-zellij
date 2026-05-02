@@ -1,0 +1,8 @@
+.env
+letsencrypt/
+*.pem
+*.key
+*.crt
+__pycache__/
+*.pyc
+.venv/

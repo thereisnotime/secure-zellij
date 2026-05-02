@@ -1,0 +1,21 @@
+http:
+  routers:
+    zellij:
+      rule: "Host(`{{ env "DOMAIN" }}`)"
+      entryPoints:
+        - websecure
+      service: zellij
+      middlewares:
+        - security-headers
+        - real-ip
+      tls: {}
+      # For Let's Encrypt, replace `tls: {}` with:
+      # tls:
+      #   certResolver: letsencrypt
+
+  services:
+    zellij:
+      loadBalancer:
+        servers:
+          - url: "http://host.containers.internal:8082"
+        passHostHeader: true
