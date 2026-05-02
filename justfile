@@ -44,23 +44,71 @@ logs-traefik:
 logs-alerter:
     podman compose logs -f alerter
 
-# ── Zellij ────────────────────────────────────────────────────────────────────
+# Show last N access log entries (default: 20)
+access n="20":
+    @tail -{{ n }} ~/.local/share/containers/storage/volumes/secure-zellij_traefik-logs/_data/access.log \
+        | python3 -c "import sys,json; [print(json.dumps({k:v for k,v in json.loads(l).items() if k in ['time','ClientAddr','RequestHost','RequestPath','DownstreamStatus','RouterName','request_User-Agent']},indent=2)) for l in sys.stdin if l.strip()]" 2>/dev/null
 
-# Generate a new zellij web login token
-token:
-    zellij web --create-token
+# ── Status ────────────────────────────────────────────────────────────────────
 
-# List existing login tokens
+# Full status: zellij web server, sessions, containers, tokens
+status:
+    @echo "┌─ Zellij web server ──────────────────────────────────────"
+    @zellij web --status 2>/dev/null || echo "  offline"
+    @echo "│"
+    @echo "├─ Sessions ───────────────────────────────────────────────"
+    @zellij list-sessions 2>/dev/null | sed 's/^/  /' || echo "  none"
+    @echo "│"
+    @echo "├─ Tokens ─────────────────────────────────────────────────"
+    @zellij web --list-tokens 2>/dev/null | sed 's/^/  /' || echo "  none"
+    @echo "│"
+    @echo "└─ Containers ─────────────────────────────────────────────"
+    @podman compose ps 2>/dev/null
+
+# ── Zellij web server ─────────────────────────────────────────────────────────
+
+# Start zellij web server in the background
+web-start:
+    zellij web --start -d
+    @zellij web --status
+
+# Stop zellij web server
+web-stop:
+    zellij web --stop
+
+# ── Token management ──────────────────────────────────────────────────────────
+
+# Create a new read-write login token (optional name)
+token name="":
+    #!/usr/bin/env bash
+    if [[ -n "{{ name }}" ]]; then
+        zellij web --create-token --token-name "{{ name }}"
+    else
+        zellij web --create-token
+    fi
+
+# Create a read-only login token (optional name)
+token-ro name="":
+    #!/usr/bin/env bash
+    if [[ -n "{{ name }}" ]]; then
+        zellij web --create-read-only-token --token-name "{{ name }}"
+    else
+        zellij web --create-read-only-token
+    fi
+
+# List all tokens with creation dates
 tokens:
     zellij web --list-tokens
 
-# Show zellij web server + container status
-status:
-    @echo "=== Zellij web server ==="
-    @zellij web --status || true
-    @echo ""
-    @echo "=== Containers ==="
-    @podman compose ps
+# Revoke a token by name
+revoke name:
+    zellij web --revoke-token "{{ name }}"
+
+# Revoke all tokens (destructive)
+revoke-all:
+    @echo "Revoking all tokens..."
+    zellij web --revoke-all-tokens
+    @echo "Done."
 
 # ── Dev ───────────────────────────────────────────────────────────────────────
 
