@@ -1,5 +1,10 @@
 http:
   middlewares:
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
     real-ip:
       headers:
         customRequestHeaders:

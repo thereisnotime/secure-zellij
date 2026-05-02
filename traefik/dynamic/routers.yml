@@ -1,5 +1,13 @@
 http:
   routers:
+    zellij-http:
+      rule: "Host(`ZELLIJ_DOMAIN`)"
+      entryPoints:
+        - web
+      middlewares:
+        - https-redirect
+      service: noop
+
     zellij:
       rule: "Host(`ZELLIJ_DOMAIN`)"
       entryPoints:
@@ -14,6 +22,10 @@ http:
       #   certResolver: letsencrypt
 
   services:
+    noop:
+      loadBalancer:
+        servers: []
+
     zellij:
       loadBalancer:
         servers:
