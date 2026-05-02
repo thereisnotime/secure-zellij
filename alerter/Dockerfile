@@ -1,10 +1,10 @@
-FROM python:3.12-slim
+FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY alerter.py .
 
-CMD ["python", "-u", "alerter.py"]
+CMD ["uv", "run", "--no-dev", "python", "-u", "alerter.py"]

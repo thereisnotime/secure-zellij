@@ -66,7 +66,7 @@ status:
 
 # Lint alerter Python code
 lint:
-    ruff check alerter/
+    cd alerter && uv run ruff check .
 
 # Validate compose file
 validate:
