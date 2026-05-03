@@ -1,7 +1,7 @@
 http:
   routers:
     zellij-http:
-      rule: "Host(`ZELLIJ_DOMAIN`)"
+      rule: "ZELLIJ_RULE"
       entryPoints:
         - web
       middlewares:
@@ -9,7 +9,7 @@ http:
       service: noop
 
     zellij:
-      rule: "Host(`ZELLIJ_DOMAIN`)"
+      rule: "ZELLIJ_RULE"
       entryPoints:
         - websecure
       service: zellij

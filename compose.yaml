@@ -13,6 +13,7 @@ services:
       - letsencrypt:/letsencrypt
     environment:
       - DOMAIN=${DOMAIN}
+      - EXTRA_DOMAINS=${EXTRA_DOMAINS:-}
       - ACME_EMAIL=${ACME_EMAIL:-}
       - HTTP_PORT=${HTTP_PORT:-8080}
       - HTTPS_PORT=${HTTPS_PORT:-8443}
