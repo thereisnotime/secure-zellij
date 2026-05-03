@@ -60,7 +60,7 @@ status:
     @echo "  https://${DOMAIN}:${HTTPS_PORT:-8443}"
     @echo "│"
     @echo "├─ Sessions ───────────────────────────────────────────────"
-    @zellij list-sessions 2>/dev/null | sed 's/^/  /' || echo "  none"
+    @zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk -v base="https://${DOMAIN}:${HTTPS_PORT:-8443}" '{print "  " $1 "  →  " base "/" $1}' || echo "  none"
     @echo "│"
     @echo "├─ Tokens ─────────────────────────────────────────────────"
     @zellij web --list-tokens 2>/dev/null | sed 's/^/  /' || echo "  none"
