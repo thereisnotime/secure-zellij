@@ -78,23 +78,13 @@ web-stop:
 
 # ── Token management ──────────────────────────────────────────────────────────
 
-# Create a new read-write login token (optional name)
-token name="":
-    #!/usr/bin/env bash
-    if [[ -n "{{ name }}" ]]; then
-        zellij web --create-token --token-name "{{ name }}"
-    else
-        zellij web --create-token
-    fi
+# Create a new read-write login token (name not supported by zellij CLI)
+token:
+    zellij web --create-token
 
-# Create a read-only login token (optional name)
-token-ro name="":
-    #!/usr/bin/env bash
-    if [[ -n "{{ name }}" ]]; then
-        zellij web --create-read-only-token --token-name "{{ name }}"
-    else
-        zellij web --create-read-only-token
-    fi
+# Create a read-only login token
+token-ro:
+    zellij web --create-read-only-token
 
 # List all tokens with creation dates
 tokens:
