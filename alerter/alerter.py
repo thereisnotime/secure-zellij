@@ -11,7 +11,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 
@@ -42,7 +42,7 @@ def _build_payload(entry: dict) -> dict:
     user_agent = entry.get("request_User-Agent", "unknown")
     path = entry.get("RequestPath", "/")
     status = entry.get("DownstreamStatus", 0)
-    ts = entry.get("time", datetime.now(timezone.utc).isoformat())
+    ts = entry.get("time", datetime.now(UTC).isoformat())
     service = entry.get("ServiceName", "unknown")
 
     return {
