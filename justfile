@@ -6,6 +6,12 @@ default:
 
 # ── Stack ─────────────────────────────────────────────────────────────────────
 
+# Start the full stack: Traefik proxy + Zellij web backend
+start:
+    podman compose up -d
+    zellij web --start -d 2>/dev/null || true
+    @just status
+
 # Start the stack in the background
 up:
     podman compose up -d
@@ -57,16 +63,20 @@ status:
     @zellij web --status 2>/dev/null || echo "  offline"
     @echo "│"
     @echo "├─ Access ─────────────────────────────────────────────────"
-    @echo "  https://${DOMAIN}:${HTTPS_PORT:-8443}"
+    @{ echo "${DOMAIN}"; [ -n "${EXTRA_DOMAINS:-}" ] && echo "${EXTRA_DOMAINS}" | tr ',' '\n'; } | awk '!seen[$0]++' | while read d; do echo "  https://${d}:${HTTPS_PORT:-443}"; done
     @echo "│"
     @echo "├─ Sessions ───────────────────────────────────────────────"
-    @zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk -v base="https://${DOMAIN}:${HTTPS_PORT:-8443}" '{print "  " $1 "  →  " base "/" $1}' || echo "  none"
+    @zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk -v base="https://${DOMAIN}:${HTTPS_PORT:-443}" '{print "  " $1 "  →  " base "/" $1}' || echo "  none"
     @echo "│"
     @echo "├─ Tokens ─────────────────────────────────────────────────"
     @zellij web --list-tokens 2>/dev/null | sed 's/^/  /' || echo "  none"
     @echo "│"
     @echo "└─ Containers ─────────────────────────────────────────────"
     @podman compose ps 2>/dev/null
+
+# Open the primary URL in the default browser
+open:
+    xdg-open "https://${DOMAIN}:${HTTPS_PORT:-8443}"
 
 # ── Zellij web server ─────────────────────────────────────────────────────────
 
