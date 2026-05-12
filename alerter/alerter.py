@@ -29,8 +29,13 @@ REQUEST_TIMEOUT = 10
 
 
 def _extract_ip(entry: dict) -> str:
-    """Return best-effort real client IP from a Traefik log entry."""
-    for field in ("request_X-Real-Ip", "ClientAddr", "RequestAddr"):
+    """Return the real TCP-layer client IP from a Traefik log entry.
+
+    ClientAddr / RequestAddr are set by Traefik from the actual TCP connection
+    and cannot be spoofed by the client.  request_X-Real-Ip is an incoming
+    request header that any client can forge, so it is intentionally ignored.
+    """
+    for field in ("ClientAddr", "RequestAddr"):
         val = entry.get(field, "")
         if val:
             # Strip port if present (IPv4 addr:port or [IPv6]:port)
@@ -128,14 +133,28 @@ def tail(path: str) -> None:
     while not os.path.exists(path):
         time.sleep(5)
     print(f"[alerter] Watching {path}", flush=True)
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        fh.seek(0, 2)  # start at end — don't replay history on boot
-        while True:
-            line = fh.readline()
-            if not line:
-                time.sleep(0.3)
-                continue
-            process_line(line)
+    while True:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                fh.seek(0, 2)  # start at end — don't replay history on boot
+                inode = os.fstat(fh.fileno()).st_ino
+                while True:
+                    line = fh.readline()
+                    if not line:
+                        time.sleep(0.3)
+                        # Detect rotation: new inode or file truncated behind us
+                        try:
+                            st = os.stat(path)
+                        except FileNotFoundError:
+                            break  # file gone; outer loop will wait for it
+                        if st.st_ino != inode or st.st_size < fh.tell():
+                            print("[alerter] Log rotated, reopening ...", flush=True)
+                            break
+                        continue
+                    process_line(line)
+        except FileNotFoundError:
+            print(f"[alerter] {path} disappeared, waiting ...", flush=True)
+            time.sleep(5)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,9 @@ import alerter as a  # noqa: E402 (local package, no install)
 
 
 def test_extract_ip_from_real_ip_header():
-    assert a._extract_ip({"request_X-Real-Ip": "1.2.3.4"}) == "1.2.3.4"
+    # request_X-Real-Ip is a spoofable request header and is intentionally ignored;
+    # an entry with only that field should fall back to "unknown".
+    assert a._extract_ip({"request_X-Real-Ip": "1.2.3.4"}) == "unknown"
 
 
 def test_extract_ip_strips_port():
@@ -22,8 +24,9 @@ def test_extract_ip_falls_back_to_unknown():
 
 
 def test_extract_ip_prefers_real_ip_over_client_addr():
+    # ClientAddr is the authoritative TCP-layer IP; request_X-Real-Ip is ignored.
     entry = {"request_X-Real-Ip": "9.9.9.9", "ClientAddr": "127.0.0.1:1234"}
-    assert a._extract_ip(entry) == "9.9.9.9"
+    assert a._extract_ip(entry) == "127.0.0.1"
 
 
 # ── _build_payload ────────────────────────────────────────────────────────────
@@ -31,7 +34,7 @@ def test_extract_ip_prefers_real_ip_over_client_addr():
 
 def test_build_payload_fields():
     entry = {
-        "request_X-Real-Ip": "5.5.5.5",
+        "ClientAddr": "5.5.5.5:12345",
         "request_X-Forwarded-For": "5.5.5.5, 10.0.0.1",
         "request_User-Agent": "Mozilla/5.0",
         "RequestPath": "/my-session",

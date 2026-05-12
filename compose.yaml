@@ -36,8 +36,8 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - WEBHOOK_URLS=${WEBHOOK_URLS:-}
+      - WEBHOOK_BODY_TEMPLATE=${WEBHOOK_BODY_TEMPLATE:-}
       - ALERT_ON_STATUS=${ALERT_ON_STATUS:-101}
-      - ZELLIJ_HOST=${DOMAIN}
     networks:
       - proxy
     depends_on:
