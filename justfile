@@ -128,6 +128,10 @@ lint:
 format:
     cd alerter && uv run ruff format .
 
+# Run alerter unit tests
+test:
+    cd alerter && uv run pytest
+
 # Validate compose file
 validate:
     podman compose config --quiet

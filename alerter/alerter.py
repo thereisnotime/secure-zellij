@@ -21,6 +21,10 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 # Comma-separated list of webhook URLs
 WEBHOOK_URLS = [u.strip() for u in os.environ.get("WEBHOOK_URLS", "").split(",") if u.strip()]
 ALERT_ON_STATUS = int(os.environ.get("ALERT_ON_STATUS", "101"))
+# Optional JSON template with {field} placeholders. Available fields:
+#   event, timestamp, client_ip, x_forwarded_for, user_agent, path, status, service
+# Example: '{"text": "Connection from {client_ip} at {timestamp}"}'
+WEBHOOK_BODY_TEMPLATE = os.environ.get("WEBHOOK_BODY_TEMPLATE", "")
 REQUEST_TIMEOUT = 10
 
 
@@ -81,10 +85,23 @@ def send_telegram(payload: dict) -> None:
         print(f"[alerter] Telegram send failed: {exc}", file=sys.stderr)
 
 
+def build_webhook_body(payload: dict, template: str = "") -> dict:
+    """Return the body to POST. If a template is set, render it and parse as JSON."""
+    if not template:
+        return payload
+    try:
+        rendered = template.format(**{k: str(v) for k, v in payload.items()})
+        return json.loads(rendered)
+    except (KeyError, ValueError) as exc:
+        print(f"[alerter] WEBHOOK_BODY_TEMPLATE error: {exc}", file=sys.stderr)
+        return payload
+
+
 def send_webhooks(payload: dict) -> None:
+    body = build_webhook_body(payload, WEBHOOK_BODY_TEMPLATE)
     for url in WEBHOOK_URLS:
         try:
-            resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
+            resp = requests.post(url, json=body, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
         except Exception as exc:
             print(f"[alerter] Webhook {url} failed: {exc}", file=sys.stderr)

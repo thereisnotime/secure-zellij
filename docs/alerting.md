@@ -62,13 +62,46 @@ Each URL receives a POST with this JSON body:
 
 Use an **HTTP Webhook** node as trigger. The payload fields map directly to n8n's `$json` object.
 
-### Slack
+### Custom body template
 
-Create an [Incoming Webhook](https://api.slack.com/messaging/webhooks) app and add its URL. Note: Slack expects a specific `{"text": "..."}` format — use n8n or a small transformation layer in between if you want rich formatting.
+If the target service expects a different shape (Slack, Discord, Mattermost, custom APIs), set `WEBHOOK_BODY_TEMPLATE` to a JSON string with `{field}` placeholders:
 
-### Discord
+```env
+WEBHOOK_BODY_TEMPLATE={"text": "Zellij connection from {client_ip} on {path} at {timestamp}"}
+```
 
-Discord webhooks expect `{"content": "..."}` or an embed object. Same approach as Slack — proxy through n8n or write a small adapter.
+Available placeholders:
+
+| Placeholder | Example value |
+|---|---|
+| `{event}` | `zellij_connect` |
+| `{timestamp}` | `2026-01-01T22:00:00+00:00` |
+| `{client_ip}` | `1.2.3.4` |
+| `{x_forwarded_for}` | `1.2.3.4, 10.0.0.1` |
+| `{user_agent}` | `Mozilla/5.0 ...` |
+| `{path}` | `/my-session` |
+| `{status}` | `101` |
+| `{service}` | `zellij` |
+
+**Slack** example:
+```env
+WEBHOOK_BODY_TEMPLATE={"text": ":electric_plug: Zellij connection\nIP: {client_ip}\nPath: {path}\nTime: {timestamp}"}
+```
+
+**Discord** example:
+```env
+WEBHOOK_BODY_TEMPLATE={"content": "Zellij connection from `{client_ip}` on `{path}`"}
+```
+
+If the template is invalid JSON after substitution, or references an unknown placeholder, the alerter logs a warning and falls back to the default payload.
+
+### Slack (without template)
+
+Create an [Incoming Webhook](https://api.slack.com/messaging/webhooks) app and add its URL. Use the `WEBHOOK_BODY_TEMPLATE` above to match Slack's expected `{"text": "..."}` format.
+
+### Discord (without template)
+
+Discord webhooks expect `{"content": "..."}`. Use `WEBHOOK_BODY_TEMPLATE` to match that shape.
 
 ## Changing the trigger condition
 

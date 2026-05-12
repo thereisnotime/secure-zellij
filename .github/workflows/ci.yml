@@ -36,6 +36,10 @@ jobs:
         working-directory: alerter
         run: uv run ruff format --check .
 
+      - name: Test alerter (pytest)
+        working-directory: alerter
+        run: uv run pytest
+
       - name: Check for secrets (gitleaks)
         uses: gitleaks/gitleaks-action@v2
         env:

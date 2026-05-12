@@ -83,6 +83,7 @@ Copy `.env.example` to `.env` and edit:
 | `TELEGRAM_BOT_TOKEN` | | — | Bot token from [@BotFather](https://t.me/BotFather) |
 | `TELEGRAM_CHAT_ID` | | — | Chat or channel ID for alerts |
 | `WEBHOOK_URLS` | | — | Comma-separated webhook URLs |
+| `WEBHOOK_BODY_TEMPLATE` | | — | JSON template for webhook body (see [Alerting](docs/alerting.md)) |
 
 ## TLS Modes
 
@@ -174,7 +175,9 @@ just token          # generate a zellij web login token
 just tokens         # list existing tokens
 just status         # show zellij + container status
 
-just lint           # lint alerter Python (ruff)
+just lint           # lint alerter Python (ruff check + format)
+just format         # auto-format alerter Python
+just test           # run alerter unit tests
 just validate       # validate compose.yaml
 ```
 
