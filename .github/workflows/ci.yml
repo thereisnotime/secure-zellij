@@ -28,9 +28,13 @@ jobs:
         working-directory: alerter
         run: uv sync --frozen
 
-      - name: Lint alerter (ruff)
+      - name: Lint alerter (ruff check)
         working-directory: alerter
         run: uv run ruff check .
+
+      - name: Format check alerter (ruff format)
+        working-directory: alerter
+        run: uv run ruff format --check .
 
       - name: Check for secrets (gitleaks)
         uses: gitleaks/gitleaks-action@v2

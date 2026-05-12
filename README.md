@@ -8,8 +8,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/thereisnotime/secure-zellij)](https://github.com/thereisnotime/secure-zellij/commits/main)
 [![Issues](https://img.shields.io/github/issues/thereisnotime/secure-zellij)](https://github.com/thereisnotime/secure-zellij/issues)
-[![Traefik](https://img.shields.io/badge/Traefik-v3.3-blue?logo=traefikproxy&logoColor=white)](https://traefik.io)
-[![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](https://python.org)
+[![Traefik](https://img.shields.io/badge/Traefik-v3.6-blue?logo=traefikproxy&logoColor=white)](https://traefik.io)
+[![Python](https://img.shields.io/badge/Python-3.14-blue?logo=python&logoColor=white)](https://python.org)
 [![Podman](https://img.shields.io/badge/Podman-compose-892CA0?logo=podman&logoColor=white)](https://podman.io)
 
 </div>
@@ -178,6 +178,15 @@ just lint           # lint alerter Python (ruff)
 just validate       # validate compose.yaml
 ```
 
+## Documentation
+
+| | |
+|---|---|
+| [TLS Configuration](docs/tls.md) | Self-signed, Let's Encrypt, DNS-01, BYO cert, hardening |
+| [Alerting](docs/alerting.md) | Telegram, webhooks, n8n, trigger conditions |
+| [Multi-domain & LAN Access](docs/multi-domain.md) | EXTRA_DOMAINS, LAN IP, local DNS, tunnels |
+| [Systemd Service](docs/systemd.md) | Auto-start on login or boot |
+
 ## Project Structure
 
 ```
@@ -185,15 +194,18 @@ just validate       # validate compose.yaml
 ├── justfile                    # command runner
 ├── compose.yaml                # podman compose stack
 ├── .env.example                # environment template
+├── docs/                       # advanced usage documentation
 ├── traefik/
 │   ├── traefik.yml             # static config (entrypoints, access log)
+│   ├── entrypoint.sh           # builds multi-domain Host rule at startup
 │   └── dynamic/
 │       ├── routers.yml         # routing rules + backend (host:8082)
 │       ├── middlewares.yml     # security headers, real-IP extraction
 │       └── tls.yml             # TLS options (min version, ciphers)
 ├── alerter/
 │   ├── alerter.py              # log tailer + alert dispatcher
-│   ├── requirements.txt
+│   ├── pyproject.toml          # dependencies + ruff config
+│   ├── uv.lock
 │   └── Dockerfile
 └── .github/
     └── workflows/
@@ -204,7 +216,6 @@ just validate       # validate compose.yaml
 
 - Zellij token authentication is handled by the zellij web server — Traefik adds no extra auth layer.
 - HTTP permanently redirects to HTTPS; plain-text connections are not served.
-- `sniStrict: true` drops connections without a matching SNI header.
 - TLS 1.2 minimum; TLS 1.0/1.1 are disabled.
 - For production deployments, use Let's Encrypt or a CA-signed cert. Self-signed certs expose users to MITM if browser warnings are bypassed.
 

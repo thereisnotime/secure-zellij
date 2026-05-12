@@ -120,9 +120,13 @@ revoke-all:
 
 # ── Dev ───────────────────────────────────────────────────────────────────────
 
-# Lint alerter Python code
+# Lint and format-check alerter Python code
 lint:
-    cd alerter && uv run ruff check .
+    cd alerter && uv run ruff check . && uv run ruff format --check .
+
+# Format alerter Python code
+format:
+    cd alerter && uv run ruff format .
 
 # Validate compose file
 validate:
