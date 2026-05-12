@@ -16,6 +16,11 @@ start:
 up:
     podman compose up -d
 
+# Stop the full stack: Traefik proxy + Zellij web backend
+stop:
+    podman compose down
+    zellij web --stop 2>/dev/null || true
+
 # Stop the stack
 down:
     podman compose down
