@@ -16,6 +16,7 @@ http:
       middlewares:
         - security-headers
         - real-ip
+        - rate-limit
       tls: {}
       # For Let's Encrypt, replace `tls: {}` with:
       # tls:

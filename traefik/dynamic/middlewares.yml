@@ -20,3 +20,9 @@ http:
         stsSeconds: 31536000
         customFrameOptionsValue: "SAMEORIGIN"
         contentSecurityPolicy: "default-src 'self' 'unsafe-inline' 'unsafe-eval' ws: wss:; connect-src 'self' ws: wss:"
+
+    rate-limit:
+      rateLimit:
+        average: 20
+        burst: 50
+        period: 1s

@@ -74,6 +74,27 @@ logrotate-run force="false":
         sudo logrotate --debug /etc/logrotate.d/secure-zellij; \
     fi
 
+# ── Fail2ban ──────────────────────────────────────────────────────────────────
+
+# Install fail2ban filter and jail from repo (requires sudo; substitutes log path)
+fail2ban-install:
+    sudo cp fail2ban/filter.d/traefik-zellij.conf /etc/fail2ban/filter.d/traefik-zellij.conf
+    @LOG_PATH="$(podman volume inspect secure-zellij_traefik-logs --format '{{{{.Mountpoint}}}}')" && \
+        sed "s|LOG_PATH|$LOG_PATH|g" fail2ban/jail.d/traefik-zellij.conf | \
+        sudo tee /etc/fail2ban/jail.d/traefik-zellij.conf > /dev/null
+    sudo systemctl reload fail2ban
+    @echo "Installed. Run: just fail2ban-status"
+
+# Show fail2ban jail status for this service
+fail2ban-status:
+    sudo fail2ban-client status traefik-zellij
+
+# Uninstall fail2ban config for this service
+fail2ban-uninstall:
+    sudo rm -f /etc/fail2ban/filter.d/traefik-zellij.conf /etc/fail2ban/jail.d/traefik-zellij.conf
+    sudo systemctl reload fail2ban
+    @echo "Removed."
+
 # ── Status ────────────────────────────────────────────────────────────────────
 
 # Full status: zellij web server, sessions, containers, tokens
