@@ -19,4 +19,9 @@ awk -v r="${rule}" '{gsub(/ZELLIJ_RULE/, r)}1' \
     /etc/traefik/dynamic-live/routers.yml > /tmp/routers.yml \
     && mv /tmp/routers.yml /etc/traefik/dynamic-live/routers.yml
 
-exec traefik "$@"
+# Traefik v3 does not expand ${VAR} in static config files — do it here
+awk -v hp="${HTTP_PORT:-8080}" -v hps="${HTTPS_PORT:-8443}" \
+    '{gsub(/\$\{HTTP_PORT\}/, hp); gsub(/\$\{HTTPS_PORT\}/, hps)}1' \
+    /etc/traefik/traefik.yml > /tmp/traefik.yml
+
+exec traefik --configFile=/tmp/traefik.yml "$@"
