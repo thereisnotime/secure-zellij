@@ -33,7 +33,9 @@ services:
       - NET_RAW
     volumes:
       - traefik-logs:/var/log/traefik:ro
-      - ./fail2ban:/data:ro
+      - ./fail2ban/filter.d:/data/filter.d:ro
+      - ./fail2ban/jail.d:/data/jail.d:ro
+      - fail2ban-data:/data/db
     environment:
       - TZ=${TZ:-UTC}
       - F2B_LOG_LEVEL=${F2B_LOG_LEVEL:-INFO}
@@ -65,6 +67,7 @@ services:
 volumes:
   traefik-logs:
   letsencrypt:
+  fail2ban-data:
 
 networks:
   proxy:
