@@ -2,58 +2,55 @@
 
 Fail2ban watches the Traefik access log and bans IPs that rack up repeated 4xx responses — failed token attempts, scanners, probes. The alerter notifies you; fail2ban acts.
 
-The filter and jail config live in `fail2ban/` in the repo. That's the source of truth — do not edit `/etc/fail2ban/` by hand.
+It runs as a container in the compose stack. No host packages needed — it starts with the rest of the stack via `just up`.
 
-## Requirements
+## How it works
 
-- `fail2ban` installed on the host (`apt install fail2ban` / `dnf install fail2ban`)
-- `iptables` available (see note below if using nftables)
+The `fail2ban` service mounts the shared `traefik-logs` volume read-only at `/var/log/traefik/` and reads `access.log`. When an IP exceeds `maxretry` 4xx responses within `findtime` seconds it is banned via iptables for `bantime` seconds.
 
-## Install
+Because fail2ban modifies host iptables, the container runs with `network_mode: host` and the `NET_ADMIN` + `NET_RAW` capabilities. This is intentional.
+
+## Configuration (GitOps)
+
+Configs live in `fail2ban/` in the repo and are mounted into the container read-only:
+
+- `fail2ban/filter.d/traefik-zellij.conf` — regex that matches 4xx log lines
+- `fail2ban/jail.d/traefik-zellij.conf` — ban thresholds and action
+
+To change behaviour, edit the files and restart the container:
 
 ```bash
-just fail2ban-install
+podman compose restart fail2ban
 ```
 
-This copies `fail2ban/filter.d/traefik-zellij.conf` to `/etc/fail2ban/filter.d/`, resolves the Traefik log volume path, writes the substituted jail config to `/etc/fail2ban/jail.d/`, then reloads fail2ban.
-
-## Update
-
-Edit `fail2ban/filter.d/traefik-zellij.conf` or `fail2ban/jail.d/traefik-zellij.conf`, then re-run:
+## Commands
 
 ```bash
-just fail2ban-install
-```
-
-## Status
-
-```bash
+# Jail status (banned count, total hits)
 just fail2ban-status
-```
 
-## Unban an IP
+# List currently banned IPs with ban times
+just fail2ban-banned
 
-```bash
-sudo fail2ban-client set traefik-zellij unbanip <IP>
-```
-
-## Uninstall
-
-```bash
-just fail2ban-uninstall
+# Unban a specific IP
+just fail2ban-unban 1.2.3.4
 ```
 
 ## Tuning
 
-All tuning is done in `fail2ban/jail.d/traefik-zellij.conf`:
+All thresholds are in `fail2ban/jail.d/traefik-zellij.conf`:
 
-| Parameter  | Default | Meaning                                      |
-|------------|---------|----------------------------------------------|
+| Parameter  | Default | Meaning                                          |
+|------------|---------|--------------------------------------------------|
 | `maxretry` | 10      | 4xx responses within `findtime` to trigger a ban |
-| `findtime` | 60      | Sliding window in seconds                    |
-| `bantime`  | 3600    | Ban duration in seconds (1 hour)             |
+| `findtime` | 60      | Sliding window in seconds                        |
+| `bantime`  | 3600    | Ban duration in seconds (1 hour)                 |
 
-After editing, re-run `just fail2ban-install` to apply.
+After editing, apply with:
+
+```bash
+podman compose restart fail2ban
+```
 
 ## nftables
 
