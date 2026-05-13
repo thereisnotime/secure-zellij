@@ -219,3 +219,60 @@ def test_process_line_calls_discord(mocker):
     a.process_line(entry)
     send_dc.assert_called_once()
     a._last_alert.clear()
+
+
+# ── _last_alert pruning ───────────────────────────────────────────────────────
+
+
+def test_last_alert_pruned_after_cooldown(mocker):
+    a._last_alert.clear()
+    stale_ip = "9.9.9.9"
+    other_ip = "8.8.8.8"
+    # Seed a stale entry that is past the cooldown window
+    a._last_alert[stale_ip] = a.time.monotonic() - a.ALERT_COOLDOWN_SECONDS - 1
+    mocker.patch.object(a, "send_telegram")
+    mocker.patch.object(a, "send_webhooks")
+    mocker.patch.object(a, "send_discord")
+    # Fire with a different IP so no suppression is triggered
+    entry = json.dumps(
+        {"DownstreamStatus": 101, "RequestPath": "/s", "ClientAddr": f"{other_ip}:9"}
+    )
+    a.process_line(entry)
+    assert stale_ip not in a._last_alert
+    a._last_alert.clear()
+
+
+# ── _validate_config ──────────────────────────────────────────────────────────
+
+
+def test_validate_config_warns_on_bad_template(capsys):
+    original = a.WEBHOOK_BODY_TEMPLATE
+    a.WEBHOOK_BODY_TEMPLATE = "not json {client_ip}"
+    try:
+        a._validate_config()
+    finally:
+        a.WEBHOOK_BODY_TEMPLATE = original
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+
+
+def test_validate_config_silent_on_good_template(capsys):
+    original = a.WEBHOOK_BODY_TEMPLATE
+    a.WEBHOOK_BODY_TEMPLATE = '{{"text": "{client_ip}"}}'
+    try:
+        a._validate_config()
+    finally:
+        a.WEBHOOK_BODY_TEMPLATE = original
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+def test_validate_config_silent_when_no_template(capsys):
+    original = a.WEBHOOK_BODY_TEMPLATE
+    a.WEBHOOK_BODY_TEMPLATE = ""
+    try:
+        a._validate_config()
+    finally:
+        a.WEBHOOK_BODY_TEMPLATE = original
+    captured = capsys.readouterr()
+    assert captured.err == ""

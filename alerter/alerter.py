@@ -136,6 +136,30 @@ def send_discord(payload: dict) -> None:
         print(f"[alerter] Discord send failed: {exc}", file=sys.stderr)
 
 
+def _validate_config() -> None:
+    if not WEBHOOK_BODY_TEMPLATE:
+        return
+    dummy = {
+        "event": "test",
+        "timestamp": "t",
+        "client_ip": "1.2.3.4",
+        "x_forwarded_for": "",
+        "user_agent": "u",
+        "path": "/",
+        "status": "101",
+        "service": "s",
+    }
+    try:
+        rendered = WEBHOOK_BODY_TEMPLATE.format(**dummy)
+        json.loads(rendered)
+    except (KeyError, ValueError) as exc:
+        print(
+            f"[alerter] WARNING: WEBHOOK_BODY_TEMPLATE is invalid: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _print_config() -> None:
     tg_status = (
         f"(chat_id={TELEGRAM_CHAT_ID})" if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else "disabled"
@@ -164,6 +188,11 @@ def process_line(line: str) -> None:
         return
     payload = _build_payload(entry)
     now = time.monotonic()
+    if ALERT_COOLDOWN_SECONDS > 0:
+        cutoff = now - ALERT_COOLDOWN_SECONDS
+        stale = [k for k, v in _last_alert.items() if v < cutoff]
+        for k in stale:
+            del _last_alert[k]
     ip = payload["client_ip"]
     if now - _last_alert.get(ip, 0.0) < ALERT_COOLDOWN_SECONDS:
         print(f"[alerter] Suppressed duplicate alert for {ip}", flush=True)
@@ -180,6 +209,7 @@ def tail(path: str) -> None:
     while not os.path.exists(path):
         time.sleep(5)
     print(f"[alerter] Watching {path}", flush=True)
+    _validate_config()
     _print_config()
     while True:
         try:

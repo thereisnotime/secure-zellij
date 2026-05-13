@@ -60,6 +60,20 @@ access n="20":
     @tail -{{ n }} "$(podman volume inspect secure-zellij_traefik-logs --format '{{{{.Mountpoint}}}}')/access.log" \
         | python3 -c "import sys,json; [print(json.dumps({k:v for k,v in json.loads(l).items() if k in ['time','ClientAddr','RequestHost','RequestPath','DownstreamStatus','RouterName','request_User-Agent']},indent=2)) for l in sys.stdin if l.strip()]" 2>/dev/null
 
+# Install logrotate config (requires sudo)
+logrotate-install:
+    @LOG_PATH="$(podman volume inspect secure-zellij_traefik-logs --format '{{{{.Mountpoint}}}}')" && \
+        sed "s|LOG_PATH|$LOG_PATH|g" logrotate.conf | sudo tee /etc/logrotate.d/secure-zellij > /dev/null
+    @echo "Installed to /etc/logrotate.d/secure-zellij"
+
+# Run logrotate immediately (dry-run by default, pass force=true to apply)
+logrotate-run force="false":
+    @if [ "{{ force }}" = "true" ]; then \
+        sudo logrotate --force /etc/logrotate.d/secure-zellij; \
+    else \
+        sudo logrotate --debug /etc/logrotate.d/secure-zellij; \
+    fi
+
 # ── Status ────────────────────────────────────────────────────────────────────
 
 # Full status: zellij web server, sessions, containers, tokens
