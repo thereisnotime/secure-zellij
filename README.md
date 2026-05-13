@@ -185,8 +185,13 @@ just validate       # validate compose.yaml
 
 | | |
 |---|---|
+| [Runbook](RUNBOOK.md) | Day-to-day operations: stack, tokens, fail2ban, diagnostics |
 | [TLS Configuration](docs/tls.md) | Self-signed, Let's Encrypt, DNS-01, BYO cert, hardening |
-| [Alerting](docs/alerting.md) | Telegram, webhooks, n8n, trigger conditions |
+| [Alerting](docs/alerting.md) | Telegram, Discord, webhooks, dedup cooldown |
+| [Integrations](docs/integrations.md) | n8n, Slack, ntfy.sh, Home Assistant |
+| [Fail2ban](docs/fail2ban.md) | Automatic IP banning, tuning, GitOps config |
+| [IP Allowlist](docs/ip-allowlist.md) | Restrict access to specific IPs/CIDRs |
+| [Log Rotation](docs/log-rotation.md) | Logrotate setup, portable install |
 | [Multi-domain & LAN Access](docs/multi-domain.md) | EXTRA_DOMAINS, LAN IP, local DNS, tunnels |
 | [Systemd Service](docs/systemd.md) | Auto-start on login or boot |
 

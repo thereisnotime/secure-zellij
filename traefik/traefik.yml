@@ -2,6 +2,8 @@ api:
   dashboard: false
   insecure: false
 
+ping: {}
+
 entryPoints:
   web:
     address: ":${HTTP_PORT}"
