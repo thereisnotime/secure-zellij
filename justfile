@@ -57,7 +57,7 @@ logs-alerter:
 
 # Show last N access log entries (default: 20)
 access n="20":
-    @tail -{{ n }} ~/.local/share/containers/storage/volumes/secure-zellij_traefik-logs/_data/access.log \
+    @tail -{{ n }} "$(podman volume inspect secure-zellij_traefik-logs --format '{{{{.Mountpoint}}}}')/access.log" \
         | python3 -c "import sys,json; [print(json.dumps({k:v for k,v in json.loads(l).items() if k in ['time','ClientAddr','RequestHost','RequestPath','DownstreamStatus','RouterName','request_User-Agent']},indent=2)) for l in sys.stdin if l.strip()]" 2>/dev/null
 
 # ── Status ────────────────────────────────────────────────────────────────────

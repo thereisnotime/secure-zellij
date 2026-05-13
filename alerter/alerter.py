@@ -20,12 +20,16 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 # Comma-separated list of webhook URLs
 WEBHOOK_URLS = [u.strip() for u in os.environ.get("WEBHOOK_URLS", "").split(",") if u.strip()]
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 ALERT_ON_STATUS = int(os.environ.get("ALERT_ON_STATUS", "101"))
 # Optional JSON template with {field} placeholders. Available fields:
 #   event, timestamp, client_ip, x_forwarded_for, user_agent, path, status, service
 # Example: '{"text": "Connection from {client_ip} at {timestamp}"}'
 WEBHOOK_BODY_TEMPLATE = os.environ.get("WEBHOOK_BODY_TEMPLATE", "")
+ALERT_COOLDOWN_SECONDS = int(os.environ.get("ALERT_COOLDOWN_SECONDS", "60"))
 REQUEST_TIMEOUT = 10
+
+_last_alert: dict[str, float] = {}
 
 
 def _extract_ip(entry: dict) -> str:
@@ -112,6 +116,42 @@ def send_webhooks(payload: dict) -> None:
             print(f"[alerter] Webhook {url} failed: {exc}", file=sys.stderr)
 
 
+def send_discord(payload: dict) -> None:
+    if not DISCORD_WEBHOOK_URL:
+        return
+    ip = payload["client_ip"]
+    fwd = f"\nForwarded-For: {payload['x_forwarded_for']}" if payload["x_forwarded_for"] else ""
+    ua = payload["user_agent"][:100]
+    text = (
+        f"\U0001f50c **Zellij connection**\n"
+        f"IP: {ip}{fwd}\n"
+        f"Path: {payload['path']}\n"
+        f"UA: {ua}\n"
+        f"Time: {payload['timestamp']}"
+    )
+    try:
+        resp = requests.post(DISCORD_WEBHOOK_URL, json={"content": text}, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+    except Exception as exc:
+        print(f"[alerter] Discord send failed: {exc}", file=sys.stderr)
+
+
+def _print_config() -> None:
+    tg_status = (
+        f"(chat_id={TELEGRAM_CHAT_ID})" if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else "disabled"
+    )
+    tg_check = "+" if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else "-"
+    discord_status = "+" if DISCORD_WEBHOOK_URL else "-"
+    discord_label = "" if DISCORD_WEBHOOK_URL else "  disabled"
+    webhook_status = "+" if WEBHOOK_URLS else "-"
+    webhook_label = f"({len(WEBHOOK_URLS)} URLs)" if WEBHOOK_URLS else "disabled"
+    print("[alerter] Channels:", flush=True)
+    print(f"[alerter]   Telegram  {tg_check}  {tg_status}", flush=True)
+    print(f"[alerter]   Discord   {discord_status}{discord_label}", flush=True)
+    print(f"[alerter]   Webhooks  {webhook_status}  {webhook_label}", flush=True)
+    print(f"[alerter]   Cooldown  {ALERT_COOLDOWN_SECONDS}s", flush=True)
+
+
 def process_line(line: str) -> None:
     line = line.strip()
     if not line:
@@ -123,9 +163,16 @@ def process_line(line: str) -> None:
     if entry.get("DownstreamStatus") != ALERT_ON_STATUS:
         return
     payload = _build_payload(entry)
-    print(f"[alerter] Connection: {payload['client_ip']} → {payload['path']}", flush=True)
+    now = time.monotonic()
+    ip = payload["client_ip"]
+    if now - _last_alert.get(ip, 0.0) < ALERT_COOLDOWN_SECONDS:
+        print(f"[alerter] Suppressed duplicate alert for {ip}", flush=True)
+        return
+    _last_alert[ip] = now
+    print(f"[alerter] Connection: {payload['client_ip']} -> {payload['path']}", flush=True)
     send_telegram(payload)
     send_webhooks(payload)
+    send_discord(payload)
 
 
 def tail(path: str) -> None:
@@ -133,6 +180,7 @@ def tail(path: str) -> None:
     while not os.path.exists(path):
         time.sleep(5)
     print(f"[alerter] Watching {path}", flush=True)
+    _print_config()
     while True:
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:

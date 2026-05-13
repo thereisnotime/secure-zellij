@@ -35,6 +35,23 @@ UA: `Mozilla/5.0 (X11; Linux x86_64) ...`
 Time: `2026-01-01T22:00:00+00:00`
 ```
 
+## Discord
+
+Set `DISCORD_WEBHOOK_URL` to a Discord channel webhook URL.
+
+To get one: open your Discord server → **Server Settings** → **Integrations** → **Webhooks** → **New Webhook** → copy the URL.
+
+```env
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/1234567890/xxxxxxxxxxxx
+```
+
+The alerter posts to Discord's native webhook format (`{"content": "..."}`), so no body template is needed. Example alert message:
+
+```
+🔌 Zellij connection
+IP: `1.2.3.4`  Path: `/my-session`  Time: `2026-01-01T22:00:00+00:00`
+```
+
 ## Generic webhooks
 
 Any number of HTTP POST endpoints, comma-separated:
@@ -58,13 +75,9 @@ Each URL receives a POST with this JSON body:
 }
 ```
 
-### n8n
+## Webhook body template
 
-Use an **HTTP Webhook** node as trigger. The payload fields map directly to n8n's `$json` object.
-
-### Custom body template
-
-If the target service expects a different shape (Slack, Discord, Mattermost, custom APIs), set `WEBHOOK_BODY_TEMPLATE` to a JSON string with `{field}` placeholders:
+If the target service expects a different payload shape, set `WEBHOOK_BODY_TEMPLATE` to a JSON string with `{field}` placeholders:
 
 ```env
 WEBHOOK_BODY_TEMPLATE={"text": "Zellij connection from {client_ip} on {path} at {timestamp}"}
@@ -83,25 +96,25 @@ Available placeholders:
 | `{status}` | `101` |
 | `{service}` | `zellij` |
 
-**Slack** example:
-```env
-WEBHOOK_BODY_TEMPLATE={"text": ":electric_plug: Zellij connection\nIP: {client_ip}\nPath: {path}\nTime: {timestamp}"}
-```
-
-**Discord** example:
-```env
-WEBHOOK_BODY_TEMPLATE={"content": "Zellij connection from `{client_ip}` on `{path}`"}
-```
-
 If the template is invalid JSON after substitution, or references an unknown placeholder, the alerter logs a warning and falls back to the default payload.
 
-### Slack (without template)
+## Alert deduplication
 
-Create an [Incoming Webhook](https://api.slack.com/messaging/webhooks) app and add its URL. Use the `WEBHOOK_BODY_TEMPLATE` above to match Slack's expected `{"text": "..."}` format.
+`ALERT_COOLDOWN_SECONDS` (default: `60`) suppresses repeat alerts from the same IP within the configured window. This prevents notification spam if a client reconnects rapidly.
 
-### Discord (without template)
+```env
+ALERT_COOLDOWN_SECONDS=60   # suppress repeated alerts from same IP within 60s
+```
 
-Discord webhooks expect `{"content": "..."}`. Use `WEBHOOK_BODY_TEMPLATE` to match that shape.
+Set to `0` to disable deduplication and receive every alert:
+
+```env
+ALERT_COOLDOWN_SECONDS=0
+```
+
+## Combining channels
+
+All configured channels (Telegram, Discord, generic webhooks) fire simultaneously for each matching event. You can use any combination — set only the vars you need and leave the rest empty.
 
 ## Changing the trigger condition
 

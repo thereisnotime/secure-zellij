@@ -140,3 +140,82 @@ def test_process_line_ignores_blank():
 
 def test_process_line_ignores_invalid_json():
     a.process_line("{bad json")
+
+
+# ── deduplication ─────────────────────────────────────────────────────────────
+
+
+def test_dedup_suppresses_repeat_within_cooldown(mocker, capsys):
+    a._last_alert.clear()
+    send_tg = mocker.patch.object(a, "send_telegram")
+    send_wh = mocker.patch.object(a, "send_webhooks")
+    send_dc = mocker.patch.object(a, "send_discord")
+    entry = json.dumps({"DownstreamStatus": 101, "RequestPath": "/s", "ClientAddr": "2.2.2.2:9"})
+    # First call should fire
+    a.process_line(entry)
+    assert send_tg.call_count == 1
+    # Second call within cooldown should be suppressed
+    a.process_line(entry)
+    assert send_tg.call_count == 1
+    assert send_wh.call_count == 1
+    assert send_dc.call_count == 1
+    out = capsys.readouterr().out
+    assert "Suppressed duplicate alert for 2.2.2.2" in out
+    a._last_alert.clear()
+
+
+def test_dedup_allows_after_cooldown(mocker):
+    a._last_alert.clear()
+    send_tg = mocker.patch.object(a, "send_telegram")
+    mocker.patch.object(a, "send_webhooks")
+    mocker.patch.object(a, "send_discord")
+    entry = json.dumps({"DownstreamStatus": 101, "RequestPath": "/s", "ClientAddr": "3.3.3.3:9"})
+    # First call
+    a.process_line(entry)
+    assert send_tg.call_count == 1
+    # Advance time past cooldown
+    future = a._last_alert["3.3.3.3"] + a.ALERT_COOLDOWN_SECONDS + 1
+    mocker.patch("alerter.time.monotonic", return_value=future)
+    a.process_line(entry)
+    assert send_tg.call_count == 2
+    a._last_alert.clear()
+
+
+# ── send_discord ──────────────────────────────────────────────────────────────
+
+_DISCORD_PAYLOAD = {
+    "client_ip": "1.2.3.4",
+    "path": "/s",
+    "user_agent": "curl",
+    "timestamp": "t",
+    "x_forwarded_for": "",
+}
+
+
+def test_send_discord_posts_content(mocker, monkeypatch):
+    monkeypatch.setattr(a, "DISCORD_WEBHOOK_URL", "https://discord.example.com/webhook")
+    mock_post = mocker.patch("alerter.requests.post")
+    mock_post.return_value.raise_for_status = lambda: None
+    a.send_discord(_DISCORD_PAYLOAD)
+    mock_post.assert_called_once()
+    call_kwargs = mock_post.call_args
+    assert call_kwargs[0][0] == "https://discord.example.com/webhook"
+    assert "content" in call_kwargs[1]["json"]
+
+
+def test_send_discord_skips_when_no_url(mocker, monkeypatch):
+    monkeypatch.setattr(a, "DISCORD_WEBHOOK_URL", "")
+    mock_post = mocker.patch("alerter.requests.post")
+    a.send_discord(_DISCORD_PAYLOAD)
+    mock_post.assert_not_called()
+
+
+def test_process_line_calls_discord(mocker):
+    a._last_alert.clear()
+    mocker.patch.object(a, "send_telegram")
+    mocker.patch.object(a, "send_webhooks")
+    send_dc = mocker.patch.object(a, "send_discord")
+    entry = json.dumps({"DownstreamStatus": 101, "RequestPath": "/s", "ClientAddr": "4.4.4.4:9"})
+    a.process_line(entry)
+    send_dc.assert_called_once()
+    a._last_alert.clear()
