@@ -26,7 +26,10 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 WEBHOOK_URLS = [u.strip() for u in os.environ.get("WEBHOOK_URLS", "").split(",") if u.strip()]
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
-ALERT_ON_STATUS = int(os.environ.get("ALERT_ON_STATUS", "101"))
+# Traefik logs WebSocket connections as DownstreamStatus=0 (hijacked connections
+# don't carry a status code through the proxy layer). Set to 0 to alert on
+# every terminal session close, or leave at 101 to effectively disable alerts.
+ALERT_ON_STATUS = int(os.environ.get("ALERT_ON_STATUS", "0"))
 WEBHOOK_BODY_TEMPLATE = os.environ.get("WEBHOOK_BODY_TEMPLATE", "")
 ALERT_COOLDOWN_SECONDS = int(os.environ.get("ALERT_COOLDOWN_SECONDS", "60"))
 REQUEST_TIMEOUT = 10
@@ -187,6 +190,7 @@ def init_db() -> None:
 
 def _parse_session(path: str) -> str | None:
     """Return session name from /ws/terminal[/name], or None to skip storage."""
+    path = path.split("?")[0]  # strip query string
     if path in ("/ws/terminal", "/ws/terminal/"):
         return ""
     if path.startswith("/ws/terminal/"):
@@ -194,8 +198,9 @@ def _parse_session(path: str) -> str | None:
     return None
 
 
-def store_event(ip: str, session: str, user_agent: str, path: str) -> None:
-    ts = datetime.now(UTC).isoformat()
+def store_event(ip: str, session: str, user_agent: str, path: str, ts: str | None = None) -> None:
+    if ts is None:
+        ts = datetime.now(UTC).isoformat()
     with _db_lock, sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO connections (ts, ip, session, user_agent, path) VALUES (?,?,?,?,?)",
@@ -466,12 +471,16 @@ def process_line(line: str) -> None:
 
     status = entry.get("DownstreamStatus")
 
-    # Always record terminal WebSocket connections (101) for stats, regardless of ALERT_ON_STATUS
-    if status == 101:
+    # Traefik logs WebSocket connections as DownstreamStatus=0 (connection hijacked,
+    # status never sent back through Traefik's response layer). The log entry is
+    # written when the connection closes; StartUTC is when it opened.
+    path = entry.get("RequestPath", "")
+    if status == 0 and _parse_session(path) is not None:
         payload = _build_payload(entry)
         session = _parse_session(payload["path"])
-        if session is not None:
-            store_event(payload["client_ip"], session, payload["user_agent"], payload["path"])
+        # Use StartUTC (connection open time) rather than when the log was written
+        ts_open = entry.get("StartUTC", entry.get("time", datetime.now(UTC).isoformat()))
+        store_event(payload["client_ip"], session, payload["user_agent"], payload["path"], ts_open)
 
     if status != ALERT_ON_STATUS:
         return
@@ -496,6 +505,31 @@ def process_line(line: str) -> None:
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
 
+def _backfill(path: str) -> None:
+    """Replay existing log to seed the DB with historical WebSocket connections."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            count = 0
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                p = entry.get("RequestPath", "")
+                if entry.get("DownstreamStatus") == 0 and _parse_session(p) is not None:
+                    payload = _build_payload(entry)
+                    session = _parse_session(payload["path"])
+                    ts_open = entry.get("StartUTC", entry.get("time", datetime.now(UTC).isoformat()))
+                    store_event(payload["client_ip"], session, payload["user_agent"], payload["path"], ts_open)
+                    count += 1
+        print(f"[alerter] Backfilled {count} historical connections", flush=True)
+    except FileNotFoundError:
+        pass
+
+
 def tail(path: str) -> None:
     init_db()
     t = threading.Thread(target=_run_stats_server, daemon=True)
@@ -505,6 +539,7 @@ def tail(path: str) -> None:
     while not os.path.exists(path):
         time.sleep(5)
     print(f"[alerter] Watching {path}", flush=True)
+    _backfill(path)
     _validate_config()
     _print_config()
     while True:
