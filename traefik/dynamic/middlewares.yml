@@ -26,3 +26,8 @@ http:
         average: 20
         burst: 50
         period: 1s
+
+    stats-strip:
+      stripPrefix:
+        prefixes:
+          - "/stats"

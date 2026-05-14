@@ -22,6 +22,17 @@ http:
       # tls:
       #   certResolver: letsencrypt
 
+    stats:
+      rule: "(ZELLIJ_RULE) && PathPrefix(`/stats`)"
+      entryPoints:
+        - websecure
+      service: stats
+      middlewares:
+        - security-headers
+        - real-ip
+        - stats-strip
+      tls: {}
+
   services:
     noop:
       loadBalancer:
@@ -31,4 +42,10 @@ http:
       loadBalancer:
         servers:
           - url: "http://127.0.0.1:8082"
+        passHostHeader: true
+
+    stats:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8083"
         passHostHeader: true

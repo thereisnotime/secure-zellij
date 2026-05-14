@@ -48,8 +48,11 @@ services:
       dockerfile: Dockerfile
     container_name: secure-zellij-alerter
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8083:8083"
     volumes:
       - traefik-logs:/var/log/traefik:ro
+      - stats-data:/data
     environment:
       - ACCESS_LOG=/var/log/traefik/access.log
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
@@ -59,6 +62,10 @@ services:
       - ALERT_COOLDOWN_SECONDS=${ALERT_COOLDOWN_SECONDS:-60}
       - WEBHOOK_BODY_TEMPLATE=${WEBHOOK_BODY_TEMPLATE:-}
       - ALERT_ON_STATUS=${ALERT_ON_STATUS:-101}
+      - STATS_PORT=8083
+      - STATS_DB=/data/stats.db
+      - STATS_USERNAME=${STATS_USERNAME:-}
+      - STATS_PASSWORD=${STATS_PASSWORD:-}
     networks:
       - proxy
     depends_on:
@@ -68,6 +75,7 @@ volumes:
   traefik-logs:
   letsencrypt:
   fail2ban-data:
+  stats-data:
 
 networks:
   proxy:
