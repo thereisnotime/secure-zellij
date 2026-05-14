@@ -24,7 +24,7 @@ services:
       retries: 3
 
   fail2ban:
-    image: crazymax/fail2ban:latest
+    image: crazymax/fail2ban@sha256:a1476ec3587dd7c6756d8cdb448fb0a262c242042d8a71557da6b5aa7aecd911
     container_name: secure-zellij-fail2ban
     restart: unless-stopped
     network_mode: host
