@@ -169,6 +169,7 @@ _HTML = """<!DOCTYPE html>
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
 
+
 def init_db() -> None:
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     with _db_lock, sqlite3.connect(DB_PATH) as conn:
@@ -194,7 +195,7 @@ def _parse_session(path: str) -> str | None:
     if path in ("/ws/terminal", "/ws/terminal/"):
         return ""
     if path.startswith("/ws/terminal/"):
-        return path[len("/ws/terminal/"):].strip("/")
+        return path[len("/ws/terminal/") :].strip("/")
     return None
 
 
@@ -213,8 +214,10 @@ def _fill_hourly(rows: list, hours: int = 24) -> list[dict]:
     now = datetime.now(UTC)
     by_hour: dict[str, int] = {r[0]: r[1] for r in rows}
     return [
-        {"hour": (now - timedelta(hours=i)).strftime("%Y-%m-%dT%H:00Z"),
-         "count": by_hour.get((now - timedelta(hours=i)).strftime("%Y-%m-%dT%H:00Z"), 0)}
+        {
+            "hour": (now - timedelta(hours=i)).strftime("%Y-%m-%dT%H:00Z"),
+            "count": by_hour.get((now - timedelta(hours=i)).strftime("%Y-%m-%dT%H:00Z"), 0),
+        }
         for i in range(hours - 1, -1, -1)
     ]
 
@@ -222,45 +225,61 @@ def _fill_hourly(rows: list, hours: int = 24) -> list[dict]:
 def get_stats() -> dict:
     now = datetime.now(UTC)
     today_start = now.strftime("%Y-%m-%dT00:00:00")
-    ago_1h  = (now - timedelta(hours=1)).isoformat()
-    ago_5m  = (now - timedelta(minutes=5)).isoformat()
+    ago_1h = (now - timedelta(hours=1)).isoformat()
+    ago_5m = (now - timedelta(minutes=5)).isoformat()
     ago_24h = (now - timedelta(hours=24)).isoformat()
 
     with sqlite3.connect(DB_PATH, check_same_thread=False) as conn:
         conn.row_factory = sqlite3.Row
-        active  = conn.execute("SELECT COUNT(DISTINCT session) FROM connections WHERE ts>=?", (ago_5m,)).fetchone()[0]
-        ips_1h  = conn.execute("SELECT COUNT(DISTINCT ip) FROM connections WHERE ts>=?", (ago_1h,)).fetchone()[0]
-        c_today = conn.execute("SELECT COUNT(*) FROM connections WHERE ts>=?", (today_start,)).fetchone()[0]
+        active = conn.execute(
+            "SELECT COUNT(DISTINCT session) FROM connections WHERE ts>=?", (ago_5m,)
+        ).fetchone()[0]
+        ips_1h = conn.execute(
+            "SELECT COUNT(DISTINCT ip) FROM connections WHERE ts>=?", (ago_1h,)
+        ).fetchone()[0]
+        c_today = conn.execute(
+            "SELECT COUNT(*) FROM connections WHERE ts>=?", (today_start,)
+        ).fetchone()[0]
         c_total = conn.execute("SELECT COUNT(*) FROM connections").fetchone()[0]
 
-        sessions = conn.execute("""
+        sessions = conn.execute(
+            """
             SELECT session, MAX(ts) as last_seen,
                    SUM(CASE WHEN ts>=? THEN 1 ELSE 0 END) as connections_today,
                    COUNT(*) as connections_total
             FROM connections
             GROUP BY session ORDER BY last_seen DESC LIMIT 25
-        """, (today_start,)).fetchall()
+        """,
+            (today_start,),
+        ).fetchall()
 
         recent = conn.execute(
             "SELECT ts, ip, session, user_agent FROM connections ORDER BY ts DESC LIMIT 50"
         ).fetchall()
 
-        hourly_rows = conn.execute("""
+        hourly_rows = conn.execute(
+            """
             SELECT strftime('%Y-%m-%dT%H:00Z', ts) as hour, COUNT(*) as cnt
             FROM connections WHERE ts>=? GROUP BY hour ORDER BY hour
-        """, (ago_24h,)).fetchall()
+        """,
+            (ago_24h,),
+        ).fetchall()
 
     return {
         "generated_at": now.isoformat(),
         "summary": {
-            "active_sessions":   active,
-            "connected_ips_1h":  ips_1h,
+            "active_sessions": active,
+            "connected_ips_1h": ips_1h,
             "connections_today": c_today,
             "connections_total": c_total,
         },
         "sessions": [
-            {"name": r["session"], "last_seen": r["last_seen"],
-             "connections_today": r["connections_today"], "connections_total": r["connections_total"]}
+            {
+                "name": r["session"],
+                "last_seen": r["last_seen"],
+                "connections_today": r["connections_today"],
+                "connections_total": r["connections_total"],
+            }
             for r in sessions
         ],
         "recent_connections": [
@@ -273,6 +292,7 @@ def get_stats() -> dict:
 
 # ── HTTP stats server ──────────────────────────────────────────────────────────
 
+
 def _check_auth(auth_header: str) -> bool:
     if not STATS_USERNAME:
         return True
@@ -283,9 +303,9 @@ def _check_auth(auth_header: str) -> bool:
         username, _, password = decoded.partition(":")
     except Exception:
         return False
-    return secrets.compare_digest(username.encode(), STATS_USERNAME.encode()) and secrets.compare_digest(
-        password.encode(), STATS_PASSWORD.encode()
-    )
+    return secrets.compare_digest(
+        username.encode(), STATS_USERNAME.encode()
+    ) and secrets.compare_digest(password.encode(), STATS_PASSWORD.encode())
 
 
 def _make_app():
@@ -326,10 +346,12 @@ def _make_app():
 
 def _run_stats_server() -> None:
     import uvicorn
+
     uvicorn.run(_make_app(), host="0.0.0.0", port=STATS_PORT, log_level="warning")
 
 
 # ── Alert helpers ──────────────────────────────────────────────────────────────
+
 
 def _extract_ip(entry: dict) -> str:
     """Return the real TCP-layer client IP from a Traefik log entry."""
@@ -432,18 +454,30 @@ def _validate_config() -> None:
     if not WEBHOOK_BODY_TEMPLATE:
         return
     dummy = {
-        "event": "test", "timestamp": "t", "client_ip": "1.2.3.4",
-        "x_forwarded_for": "", "user_agent": "u", "path": "/", "status": "101", "service": "s",
+        "event": "test",
+        "timestamp": "t",
+        "client_ip": "1.2.3.4",
+        "x_forwarded_for": "",
+        "user_agent": "u",
+        "path": "/",
+        "status": "101",
+        "service": "s",
     }
     try:
         rendered = WEBHOOK_BODY_TEMPLATE.format(**dummy)
         json.loads(rendered)
     except (KeyError, ValueError) as exc:
-        print(f"[alerter] WARNING: WEBHOOK_BODY_TEMPLATE is invalid: {exc}", file=sys.stderr, flush=True)
+        print(
+            f"[alerter] WARNING: WEBHOOK_BODY_TEMPLATE is invalid: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _print_config() -> None:
-    tg_status = f"(chat_id={TELEGRAM_CHAT_ID})" if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else "disabled"
+    tg_status = (
+        f"(chat_id={TELEGRAM_CHAT_ID})" if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else "disabled"
+    )
     tg_check = "+" if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else "-"
     discord_status = "+" if DISCORD_WEBHOOK_URL else "-"
     discord_label = "" if DISCORD_WEBHOOK_URL else "  disabled"
@@ -459,6 +493,7 @@ def _print_config() -> None:
 
 
 # ── Log processing ─────────────────────────────────────────────────────────────
+
 
 def process_line(line: str) -> None:
     line = line.strip()
@@ -505,6 +540,7 @@ def process_line(line: str) -> None:
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
 
+
 def _backfill(path: str) -> None:
     """Replay existing log to seed the DB with historical WebSocket connections."""
     try:
@@ -522,8 +558,16 @@ def _backfill(path: str) -> None:
                 if entry.get("DownstreamStatus") == 0 and _parse_session(p) is not None:
                     payload = _build_payload(entry)
                     session = _parse_session(payload["path"])
-                    ts_open = entry.get("StartUTC", entry.get("time", datetime.now(UTC).isoformat()))
-                    store_event(payload["client_ip"], session, payload["user_agent"], payload["path"], ts_open)
+                    ts_open = entry.get(
+                        "StartUTC", entry.get("time", datetime.now(UTC).isoformat())
+                    )
+                    store_event(
+                        payload["client_ip"],
+                        session,
+                        payload["user_agent"],
+                        payload["path"],
+                        ts_open,
+                    )
                     count += 1
         print(f"[alerter] Backfilled {count} historical connections", flush=True)
     except FileNotFoundError:

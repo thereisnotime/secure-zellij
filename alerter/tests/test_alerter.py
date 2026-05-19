@@ -150,7 +150,9 @@ def test_dedup_suppresses_repeat_within_cooldown(mocker, capsys):
     send_tg = mocker.patch.object(a, "send_telegram")
     send_wh = mocker.patch.object(a, "send_webhooks")
     send_dc = mocker.patch.object(a, "send_discord")
-    entry = json.dumps({"DownstreamStatus": a.ALERT_ON_STATUS, "RequestPath": "/s", "ClientAddr": "2.2.2.2:9"})
+    entry = json.dumps(
+        {"DownstreamStatus": a.ALERT_ON_STATUS, "RequestPath": "/s", "ClientAddr": "2.2.2.2:9"}
+    )
     # First call should fire
     a.process_line(entry)
     assert send_tg.call_count == 1
@@ -169,7 +171,9 @@ def test_dedup_allows_after_cooldown(mocker):
     send_tg = mocker.patch.object(a, "send_telegram")
     mocker.patch.object(a, "send_webhooks")
     mocker.patch.object(a, "send_discord")
-    entry = json.dumps({"DownstreamStatus": a.ALERT_ON_STATUS, "RequestPath": "/s", "ClientAddr": "3.3.3.3:9"})
+    entry = json.dumps(
+        {"DownstreamStatus": a.ALERT_ON_STATUS, "RequestPath": "/s", "ClientAddr": "3.3.3.3:9"}
+    )
     # First call
     a.process_line(entry)
     assert send_tg.call_count == 1
@@ -215,7 +219,9 @@ def test_process_line_calls_discord(mocker):
     mocker.patch.object(a, "send_telegram")
     mocker.patch.object(a, "send_webhooks")
     send_dc = mocker.patch.object(a, "send_discord")
-    entry = json.dumps({"DownstreamStatus": a.ALERT_ON_STATUS, "RequestPath": "/s", "ClientAddr": "4.4.4.4:9"})
+    entry = json.dumps(
+        {"DownstreamStatus": a.ALERT_ON_STATUS, "RequestPath": "/s", "ClientAddr": "4.4.4.4:9"}
+    )
     a.process_line(entry)
     send_dc.assert_called_once()
     a._last_alert.clear()
