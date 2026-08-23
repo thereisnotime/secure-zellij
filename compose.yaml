@@ -1,6 +1,6 @@
 services:
   traefik:
-    image: traefik:v3.6.15
+    image: traefik:v3.7.11
     container_name: secure-zellij-traefik
     restart: unless-stopped
     network_mode: host
