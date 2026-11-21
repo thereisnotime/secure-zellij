@@ -52,6 +52,16 @@ zellij kill-session <name>       # kill a specific session
 zellij kill-all-sessions         # kill all sessions
 ```
 
+The web UI only shows sessions started by the same zellij version as the web server;
+sessions from another version show up as exited even though they're alive. After a
+zellij upgrade, either restart the sessions on the new version or pin the web server
+to the old binary with `ZELLIJ_BIN` in `.env` (`just status` prints the binary in use):
+
+```bash
+ZELLIJ_BIN=~/.local/opt/zellij-0.45.0/zellij
+just web-stop && just web-start
+```
+
 ---
 
 ## Fail2ban
