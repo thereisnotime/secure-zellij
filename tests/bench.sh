@@ -104,15 +104,15 @@ PY
         -v "$WORK/logs:/logs:z" --entrypoint /entrypoint.sh "$(image traefik)" >/dev/null
     podman run -d --name sz-bench-f2b -v "$WORK/logs:/var/log/traefik:ro,z" \
         -v "$REPO/fail2ban/filter.d:/data/filter.d:ro,z" -v "$WORK/jail.d:/data/jail.d:ro,z" \
-        -v "$WORK/f2b-db:/data/db:z" -v sz-bench-run:/var/run/fail2ban "$F2B_IMAGE" >/dev/null 2>&1
+        -v "$WORK/f2b-db:/data/db:z" -v sz-bench-run:/var/run/fail2ban:z "$F2B_IMAGE" >/dev/null 2>&1
     podman run -d --name sz-bench-unban --network none --read-only --cap-drop ALL \
         --security-opt no-new-privileges:true --entrypoint python3 \
-        -v "$REPO/fail2ban/unban-helper.py:/unban-helper.py:ro,z" -v sz-bench-run:/var/run/fail2ban \
-        -v sz-bench-req:/requests "$F2B_IMAGE" -I /unban-helper.py >/dev/null
+        -v "$REPO/fail2ban/unban-helper.py:/unban-helper.py:ro,z" -v sz-bench-run:/var/run/fail2ban:z \
+        -v sz-bench-req:/requests:z "$F2B_IMAGE" -I /unban-helper.py >/dev/null
     podman run -d --name sz-bench-alerter --network host -e STATS_PORT=$STATS -e STATS_DB=/data/stats.db \
         -e ACCESS_LOG=/logs/access.log -e F2B_DB=/fail2ban/fail2ban.sqlite3 -e UNBAN_DIR=/unban \
         -v "$WORK/logs:/logs:ro,z" -v "$WORK/f2b-db:/fail2ban:ro,z" -v "$WORK/data:/data:Z" \
-        -v sz-bench-req:/unban "$ALERTER_IMAGE" >/dev/null
+        -v sz-bench-req:/unban:z "$ALERTER_IMAGE" >/dev/null
     # optional SSO: oauth2-proxy against a mock IdP (the IdP isn't counted)
     podman run -d --name sz-bench-idp --network host -e SERVER_PORT=$IDP "$IDP_IMAGE" >/dev/null
     for _ in $(seq 60); do

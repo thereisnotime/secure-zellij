@@ -48,19 +48,19 @@ done
 podman build -q -t "$ALERTER_IMAGE" "$REPO/alerter" >/dev/null
 podman run -d --name sz-e2e-f2b \
     -v "$WORK/log:/var/log/traefik:ro,z" -v "$REPO/fail2ban/filter.d:/data/filter.d:ro,z" \
-    -v "$WORK/jail.d:/data/jail.d:ro,z" -v "$WORK/db:/data/db:z" -v sz-e2e-f2b-run:/var/run/fail2ban \
+    -v "$WORK/jail.d:/data/jail.d:ro,z" -v "$WORK/db:/data/db:z" -v sz-e2e-f2b-run:/var/run/fail2ban:z \
     "$F2B_IMAGE" >/dev/null
 # Locked down exactly like the fail2ban-unban service
 podman run -d --name sz-e2e-unban --network none --read-only --cap-drop ALL \
     --security-opt no-new-privileges:true --entrypoint python3 -e UNBAN_JAILS=traefik-zellij \
     -v "$REPO/fail2ban/unban-helper.py:/unban-helper.py:ro,z" \
-    -v sz-e2e-f2b-run:/var/run/fail2ban -v sz-e2e-unban-req:/requests \
+    -v sz-e2e-f2b-run:/var/run/fail2ban:z -v sz-e2e-unban-req:/requests:z \
     "$F2B_IMAGE" -I /unban-helper.py >/dev/null
 podman run -d --name sz-e2e-alerter --network host \
     -e STATS_PORT=$STATS -e STATS_DB=/data/stats.db -e "STATS_USERNAME=$STATS_USER" -e "STATS_PASSWORD=$STATS_PASS" \
     -e SSO_MODE=oauth2-proxy -e F2B_DB=/fail2ban/fail2ban.sqlite3 -e F2B_POLL_SECONDS=1 -e UNBAN_DIR=/unban \
     -v "$WORK/db:/fail2ban:ro,z" -v "$WORK/data:/data:z" -v "$WORK/log:/var/log/traefik:ro,z" \
-    -v sz-e2e-unban-req:/unban "$ALERTER_IMAGE" >/dev/null
+    -v sz-e2e-unban-req:/unban:z "$ALERTER_IMAGE" >/dev/null
 
 for _ in $(seq 60); do
     podman exec sz-e2e-f2b fail2ban-client ping >/dev/null 2>&1 &&

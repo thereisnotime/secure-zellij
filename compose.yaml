@@ -81,11 +81,20 @@ services:
       - ./fail2ban/filter.d:/data/filter.d:ro
       - ./fail2ban/jail.d:/data/jail.d:ro
       - fail2ban-data:/data/db
-      # control socket, shared with fail2ban-unban only
-      - fail2ban-run:/var/run/fail2ban
+      # control socket, shared with fail2ban-unban only. :z relabels the tmpfs for
+      # SELinux; without it fail2ban can't create the socket and quietly stops banning
+      - fail2ban-run:/var/run/fail2ban:z
     environment:
       - TZ=${TZ:-UTC}
       - F2B_LOG_LEVEL=${F2B_LOG_LEVEL:-INFO}
+    # fail2ban can exit its server and leave the container running; this makes
+    # that show up as unhealthy in `podman ps`
+    healthcheck:
+      test: ["CMD", "fail2ban-client", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     depends_on:
       - traefik
 
@@ -105,8 +114,8 @@ services:
     entrypoint: ["python3", "-I", "/unban-helper.py"]
     volumes:
       - ./fail2ban/unban-helper.py:/unban-helper.py:ro
-      - fail2ban-run:/var/run/fail2ban
-      - unban-requests:/requests
+      - fail2ban-run:/var/run/fail2ban:z
+      - unban-requests:/requests:z
     environment:
       - UNBAN_JAILS=traefik-zellij
     depends_on:
@@ -126,7 +135,7 @@ services:
       # fail2ban's ban database, read-only, for ban alerts
       - fail2ban-data:/fail2ban:ro
       # drop box for unban requests, picked up by fail2ban-unban
-      - unban-requests:/unban
+      - unban-requests:/unban:z
     environment:
       - ACCESS_LOG=/var/log/traefik/access.log
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}

@@ -68,7 +68,7 @@ How it's put together, and why:
 - **`fail2ban-unban` does the work.** It runs from the fail2ban image with no network, a read-only filesystem, all capabilities dropped and `no-new-privileges`. The only command it runs is `fail2ban-client set <jail> unbanip <ip>`, for a jail listed in `UNBAN_JAILS` (default `traefik-zellij`) and a value that parses as an IP address.
 - **Cross-site requests are refused.** Browsers send basic-auth credentials and the SSO cookie with requests from other sites too. The endpoint therefore needs a custom header and a JSON body, which force a CORS preflight that the alerter never answers. It also checks `Origin` and `Sec-Fetch-Site`.
 - **No accidental self-ban.** A failed unban (e.g. the IP isn't banned) answers 200 with an error message. A 4xx would count towards fail2ban banning the admin.
-- The request and socket volumes are tmpfs, so nothing in them outlives the stack.
+- The request and socket volumes are tmpfs, so nothing in them outlives the stack. They're mounted with `:z` so podman relabels them on SELinux hosts (Fedora, RHEL). Without it, fail2ban can't create its socket, and the server exits while the container keeps running. fail2ban's healthcheck (`fail2ban-client ping`) catches that: `podman ps` shows it as unhealthy.
 
 One thing to know: the alerter's port `127.0.0.1:8083` skips Traefik, so local users on the host can reach the API directly. With basic auth set they still need the password. With SSO only, the alerter can't tell a real SSO header from a forged one on that port, so anyone with a shell on the host can unban. Set `STATS_USERNAME`/`STATS_PASSWORD` too if that matters to you.
 
