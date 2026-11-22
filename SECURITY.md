@@ -4,8 +4,8 @@ secure-zellij exposes a shell over the internet, so security reports get priorit
 
 ## Supported versions
 
-Only `main` is supported. There are no release branches. Fixes land on `main`, and
-`just upgrade` picks them up.
+The latest release and `main` are supported. There are no release branches:
+fixes land on `main` and go into the next release. `just upgrade` follows `main`.
 
 ## Reporting a vulnerability
 

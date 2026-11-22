@@ -1,15 +1,19 @@
 # Changelog
 
 Notable changes to secure-zellij. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). There are no tagged
-releases yet; everything is on `main`.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
+[Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-23
+
+First tagged release. Everything before it was on `main` only.
+
 ### Upgrading
 
-Run `just upgrade`. It pulls, rebuilds the alerter and recreates every container.
-Two things to check first:
+Run `just upgrade`. It pulls, rebuilds the alerter, then stops and starts the
+stack. Two things to check first:
 
 - **Ports**: `.env.example` now uses `8080`/`8443`. Rootless podman can't bind
   ports below 1024 unless the host allows it, see
@@ -72,9 +76,12 @@ Two things to check first:
 - podman-compose dropped the alerter's healthcheck (it was in the Dockerfile). It
   now lives in `compose.yaml` and probes `/health`.
 
-## 2026-05
+## Before 1.0.0 (2026-05 to 2026-08)
 
-First release and the months after it: Traefik in front of the zellij web server
+Untagged work on `main`: Traefik in front of the zellij web server
 with TLS and security headers, connection alerts to Telegram, Discord and
 webhooks, multi-domain support, rate limiting, fail2ban as a container, the
 `/stats` dashboard, log rotation and the `just` recipes.
+
+[Unreleased]: https://github.com/thereisnotime/secure-zellij/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/thereisnotime/secure-zellij/releases/tag/v1.0.0
