@@ -15,6 +15,10 @@ Because fail2ban modifies host iptables, the container runs with `network_mode: 
 Configs live in `fail2ban/` in the repo and are mounted into the container read-only:
 
 - `fail2ban/filter.d/traefik-zellij.conf` — regex that matches 4xx log lines
+
+If you change the filter, run `just test-filter`. It feeds the filter real-shaped Traefik lines through `fail2ban-regex` and checks the result: 4xx get banned; 0, 101, 3xx and 5xx don't; IPv6 works; and no IP gets in through a header or path value. A broken filter fails silently (nothing gets banned), so CI runs this too.
+
+Keep the regex cheap, because fail2ban runs it on every ~2 KB access-log line. A leading `.*` makes Python retry the match from every position in the line. The old filter had one, and it cost about 19% of a CPU core at 20 requests/s. The current filter uses under 2% at that rate and matches the same lines.
 - `fail2ban/jail.d/traefik-zellij.conf` — ban thresholds and action
 
 To change behaviour, edit the files and restart the container:

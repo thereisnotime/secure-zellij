@@ -187,6 +187,10 @@ validate:
 test-sso:
     tests/sso-e2e.sh
 
+# Check the fail2ban filter against sample Traefik log lines (4xx, IPv6, spoofing)
+test-filter:
+    tests/fail2ban-filter.sh
+
 # End-to-end test of the dashboard unban button (real fail2ban, throwaway containers)
 test-unban:
     tests/unban-e2e.sh

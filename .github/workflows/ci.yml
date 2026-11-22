@@ -19,7 +19,7 @@ jobs:
           docker compose -f compose.yaml --profile sso config --quiet
 
       - name: Shellcheck
-        run: shellcheck traefik/entrypoint.sh tests/sso-e2e.sh tests/unban-e2e.sh
+        run: shellcheck traefik/entrypoint.sh tests/sso-e2e.sh tests/unban-e2e.sh tests/fail2ban-filter.sh
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.4.0
@@ -68,6 +68,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - name: Check the fail2ban filter against sample log lines
+        env:
+          COMPOSE: docker compose
+        run: tests/fail2ban-filter.sh
 
       - name: Run unban e2e (real fail2ban, podman)
         env:
