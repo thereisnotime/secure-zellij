@@ -45,6 +45,8 @@ flowchart LR
             o2p["🔐 oauth2-proxy<br/><i>optional SSO</i>"]
             logs[("📜 access.log<br/>JSON")]
             f2b["🛡️ fail2ban"]
+            f2bdb[("🗄️ fail2ban.sqlite3<br/>bans")]
+            unban["🔓 fail2ban-unban<br/><i>no network</i>"]
             alerter["🔔 Alerter<br/>+ 📊 stats :8083"]
             db[("🗄️ stats.db")]
         end
@@ -68,6 +70,10 @@ flowchart LR
     logs -. "👀 tails" .-> f2b
     logs -. "👀 tails" .-> alerter
     f2b -- "⛔ iptables ban" --> traefik
+    f2b --> f2bdb
+    f2bdb -. "📖 reads bans" .-> alerter
+    alerter -. "📝 unban request" .-> unban
+    unban -- "🔌 unbanip" --> f2b
     alerter --> db
     alerter --> tg & dc & wh
 
@@ -82,10 +88,10 @@ flowchart LR
     class user client
     class traefik proxy
     class zellij app
-    class f2b guard
+    class f2b,unban guard
     class alerter,tg,dc,wh alert
     class o2p,idp sso
-    class logs,db store
+    class logs,db,f2bdb store
 
     style host fill:transparent,stroke:#64748b,stroke-width:2px,stroke-dasharray:6 4
     style stack fill:transparent,stroke:#892ca0,stroke-width:2px
