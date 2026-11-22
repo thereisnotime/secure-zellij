@@ -10,6 +10,8 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 COMPOSE=${COMPOSE:-podman compose}
+# shellcheck source=tests/lib.sh
+. "$REPO/tests/lib.sh"
 STATS=18784
 # Throwaway basic-auth login for the test alerter
 STATS_USER="admin"
@@ -35,7 +37,7 @@ expect() { # expect <name> <actual> <pattern>
 }
 
 # Same fail2ban image as the stack
-(cd "$REPO" && DOMAIN=x $COMPOSE --env-file /dev/null config --format json 2>/dev/null) >"$WORK/cfg.json"
+(cd "$REPO" && export DOMAIN=x && compose_json --env-file /dev/null) >"$WORK/cfg.json"
 F2B_IMAGE=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"]["fail2ban"]["image"])' "$WORK/cfg.json")
 
 mkdir -p "$WORK/log" "$WORK/db" "$WORK/jail.d" "$WORK/data"

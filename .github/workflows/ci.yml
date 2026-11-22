@@ -19,7 +19,7 @@ jobs:
           docker compose -f compose.yaml --profile sso config --quiet
 
       - name: Shellcheck
-        run: shellcheck traefik/entrypoint.sh tests/sso-e2e.sh tests/unban-e2e.sh tests/fail2ban-filter.sh tests/bench.sh
+        run: shellcheck -x traefik/entrypoint.sh tests/lib.sh tests/sso-e2e.sh tests/unban-e2e.sh tests/fail2ban-filter.sh tests/bench.sh
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.4.0

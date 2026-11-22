@@ -11,7 +11,9 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 COMPOSE=${COMPOSE:-podman compose}
-IMAGE=$(cd "$REPO" && DOMAIN=x $COMPOSE --env-file /dev/null config --format json 2>/dev/null |
+# shellcheck source=tests/lib.sh
+. "$REPO/tests/lib.sh"
+IMAGE=$(cd "$REPO" && export DOMAIN=x && compose_json --env-file /dev/null |
     python3 -I -c 'import json,sys; print(json.load(sys.stdin)["services"]["fail2ban"]["image"])')
 
 got=$(podman run --rm --name sz-test-f2b-filter \

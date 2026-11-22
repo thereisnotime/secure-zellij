@@ -10,6 +10,8 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 COMPOSE=${COMPOSE:-podman compose}
+# shellcheck source=tests/lib.sh
+. "$REPO/tests/lib.sh"
 IDP_IMAGE=ghcr.io/navikt/mock-oauth2-server:7.0.1
 BACKEND_IMAGE=docker.io/library/python:3.15-slim
 HTTPS=18443 IDP=18090 O2P=14180 BACKEND=18082
@@ -89,7 +91,7 @@ start_stack() {
         echo "SSO_ALLOWED_GROUPS=$2"
         printf '%b' "${3:-}"
     } >"$WORK/test.env"
-    (cd "$REPO" && $COMPOSE --env-file "$WORK/test.env" --profile sso config --format json 2>/dev/null) >"$WORK/cfg.json"
+    (cd "$REPO" && compose_json --env-file "$WORK/test.env" --profile sso) >"$WORK/cfg.json"
     local o2p_env traefik_env
     mapfile -t o2p_env < <(python3 -I - oauth2-proxy "$WORK/cfg.json" <<'PY'
 import json, sys

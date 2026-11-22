@@ -15,6 +15,8 @@ set -euo pipefail
 WHAT=${1:-all}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 COMPOSE=${COMPOSE:-podman compose}
+# shellcheck source=tests/lib.sh
+. "$REPO/tests/lib.sh"
 NAMES=(sz-bench-traefik sz-bench-f2b sz-bench-unban sz-bench-alerter sz-bench-o2p sz-bench-idp sz-bench-backend sz-bench-regex)
 VOLUMES=(sz-bench-run sz-bench-req)
 ALERTER_IMAGE=localhost/sz-bench-alerter:latest
@@ -31,7 +33,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-(cd "$REPO" && DOMAIN=zellij.test $COMPOSE --env-file /dev/null --profile sso config --format json 2>/dev/null) >"$WORK/cfg.json"
+(cd "$REPO" && export DOMAIN=zellij.test && compose_json --env-file /dev/null --profile sso) >"$WORK/cfg.json"
 image() { python3 -I -c 'import json,sys; print(json.load(open(sys.argv[2]))["services"][sys.argv[1]]["image"])' "$1" "$WORK/cfg.json"; }
 F2B_IMAGE=$(image fail2ban)
 
