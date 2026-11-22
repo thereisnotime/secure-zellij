@@ -43,8 +43,8 @@ restart:
 build:
     {{ compose }} build --no-cache
 
-# Upgrade a running install: pull the repo, then pull new images, rebuild the alerter
-# and recreate what changed (plain `just up` does not rebuild the alerter)
+# Plain `just up` keeps the old alerter image after a git pull, so rebuild here.
+# Upgrade: git pull, pull new images, rebuild the alerter, recreate what changed
 upgrade:
     git pull --ff-only
     {{ compose }} up -d --build
