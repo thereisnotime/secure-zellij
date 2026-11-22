@@ -11,7 +11,4 @@ RUN mkdir -p /data
 
 EXPOSE 8083
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD kill -0 1 || exit 1
-
 CMD ["uv", "run", "--no-dev", "python", "-u", "alerter.py"]

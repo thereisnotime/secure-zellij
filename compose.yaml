@@ -163,6 +163,14 @@ services:
       - F2B_DB=/fail2ban/fail2ban.sqlite3
       - UNBAN_ENABLED=${UNBAN_ENABLED:-true}
       - UNBAN_DIR=/unban
+    # In compose rather than the Dockerfile: podman-compose builds OCI images,
+    # which drop HEALTHCHECK
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request as u; u.urlopen(\"http://127.0.0.1:8083/health\", timeout=5)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - proxy
     depends_on:
