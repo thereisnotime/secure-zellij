@@ -41,7 +41,8 @@ flowchart LR
 
         subgraph stack["📦 podman compose"]
             direction TB
-            traefik["🚦 Traefik<br/>:8080 / :8443"]
+            edge{"🧱 edge netns<br/>:8080 / :8443<br/>⛔ nftables bans"}
+            traefik["🚦 Traefik"]
             o2p["🔐 oauth2-proxy<br/><i>optional SSO</i>"]
             logs[("📜 access.log<br/>JSON")]
             f2b["🛡️ fail2ban"]
@@ -61,7 +62,8 @@ flowchart LR
         wh["🪝 Webhooks"]
     end
 
-    user == "🔒 HTTPS / WSS" ==> traefik
+    user == "🔒 HTTPS / WSS" ==> edge
+    edge == "not banned" ==> traefik
     traefik -- "🔌 HTTP + WS" --> zellij
     traefik -. "🔐 forwardAuth" .-> o2p
     o2p -. "OIDC" .-> idp
@@ -69,7 +71,7 @@ flowchart LR
     traefik -. "✍️ writes" .-> logs
     logs -. "👀 tails" .-> f2b
     logs -. "👀 tails" .-> alerter
-    f2b -- "⛔ iptables ban" --> traefik
+    f2b -- "⛔ nftables ban" --> edge
     f2b --> f2bdb
     f2bdb -. "📖 reads bans" .-> alerter
     alerter -. "📝 unban request" .-> unban
@@ -86,7 +88,7 @@ flowchart LR
     classDef store fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#1e293b
 
     class user client
-    class traefik proxy
+    class traefik,edge proxy
     class zellij app
     class f2b,unban guard
     class alerter,tg,dc,wh alert
@@ -98,7 +100,7 @@ flowchart LR
     style notify fill:transparent,stroke:#d97706,stroke-width:2px,stroke-dasharray:6 4
 ```
 
-Zellij runs on the **host** (not containerised). Traefik and fail2ban use host networking, so Traefik proxies straight to `127.0.0.1:8082`; the alerter publishes its stats dashboard on `127.0.0.1:8083`.
+Zellij runs on the **host** (not containerised). Traefik and fail2ban share the network namespace of a small `edge` container, which holds the published ports. fail2ban's nftables bans there drop banned IPs before they reach Traefik, without root or the host firewall (see [Fail2ban](docs/fail2ban.md#where-the-ban-happens)). pasta forwards Traefik's requests to zellij on the host's `127.0.0.1:8082` and to the alerter's stats dashboard on `127.0.0.1:8083`.
 
 ### Connection flow
 
@@ -320,6 +322,7 @@ just test-sso       # SSO end-to-end test with a mock IdP
 ├── tests/
 │   ├── sso-e2e.sh              # SSO end-to-end test (mock IdP)
 │   ├── unban-e2e.sh            # unban button end-to-end test (real fail2ban)
+│   ├── ban-e2e.sh              # bans really block: real Traefik + fail2ban, nftables
 │   ├── fail2ban-filter.sh      # fail2ban filter check against sample lines
 │   └── bench.sh                # benchmarks from docs/performance.md (just bench)
 ├── alerter/

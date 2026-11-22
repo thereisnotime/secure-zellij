@@ -168,7 +168,7 @@ for i in $(seq 1 60); do curl -sk -o /dev/null -w "%{http_code}\n" \
   --resolve "zellij.local:8443:127.0.0.1" https://zellij.local:8443/; done | sort | uniq -c
 ```
 
-Check iptables ban rules:
+Check the ban rules (nftables in the edge container's namespace, not on the host):
 ```bash
-podman exec secure-zellij-fail2ban iptables -L f2b-traefik-zellij -n 2>/dev/null
+podman exec secure-zellij-fail2ban nft list ruleset
 ```

@@ -6,9 +6,43 @@ It runs as a container in the compose stack. No host packages needed — it star
 
 ## How it works
 
-The `fail2ban` service mounts the shared `traefik-logs` volume read-only at `/var/log/traefik/` and reads `access.log`. When an IP exceeds `maxretry` 4xx responses within `findtime` seconds it is banned via iptables for `bantime` seconds.
+The `fail2ban` service mounts the shared `traefik-logs` volume read-only at `/var/log/traefik/` and reads `access.log`. When an IP exceeds `maxretry` 4xx responses within `findtime` seconds, it is banned for `bantime` seconds. The ban is an nftables rule that drops the IP's packets before they reach Traefik.
 
-Because fail2ban modifies host iptables, the container runs with `network_mode: host` and the `NET_ADMIN` + `NET_RAW` capabilities. This is intentional.
+### Where the ban happens
+
+Rootless podman can't touch the host firewall. Each container can, however, have firewall rules in its own network namespace. So:
+
+- **`edge`** owns a network namespace (podman's pasta network) and the published ports. It runs nothing but a sleep loop.
+- **Traefik** and **fail2ban** both join that namespace (`network_mode: "service:edge"`).
+- fail2ban (with `NET_ADMIN`) adds its `nftables-allports` rules there. A banned IP's packets are dropped before Traefik sees them. Only Traefik listens in that namespace, so "all ports" means Traefik's ports.
+
+```mermaid
+flowchart LR
+    client["🧑‍💻 client"] -- ":8443" --> pasta["🔀 pasta<br/>keeps the client IP"]
+    subgraph ns["🧱 edge network namespace"]
+        nft{"⛔ nftables<br/>banned?"} -- "no" --> traefik["🚦 Traefik"]
+    end
+    pasta --> nft
+    nft -- "yes" --> drop(["🗑️ dropped"])
+    f2b["🛡️ fail2ban"] -. "adds rules" .-> nft
+    traefik -- "-T 8082" --> zellij["🪟 zellij<br/>host 127.0.0.1"]
+
+    classDef guard fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
+    classDef proxy fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#3b0764
+    classDef app fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d
+    class nft,f2b,drop guard
+    class traefik,pasta proxy
+    class zellij,client app
+```
+
+Details that matter:
+
+- **Real client IPs.** pasta keeps the original source address, so Traefik logs and fail2ban bans the real client. With podman 5, local connections show up as the host's own LAN address rather than 127.0.0.1. fail2ban's `ignoreself` covers it, because pasta gives the namespace the host's addresses.
+- **Host loopback.** zellij (8082), the alerter (8083) and oauth2-proxy (`SSO_PROXY_PORT`) listen on the host's 127.0.0.1. pasta's `-T` forwards those ports from inside the namespace. If Traefik has to reach something else on the host's loopback, add it with `EDGE_PASTA_EXTRA`, e.g. `EDGE_PASTA_EXTRA=,-T,9091` for an Authelia on `127.0.0.1:9091`.
+- **Restarts.** A container that joins a namespace loses it if the owner restarts. That's why `edge` owns it rather than Traefik, which restarts on every config change. Traefik and fail2ban can restart freely. If `edge` itself is recreated, recreate the others too. `just restart` and `just upgrade` do that (`--force-recreate`).
+- **Needs** pasta, which comes with podman 4.4 and later (package `passt`), and nftables in user namespaces, which every current kernel allows. Neither needs root.
+
+`tests/ban-e2e.sh` (`just test-ban`, also in CI) checks the whole thing with real Traefik and fail2ban. The client gets banned and then can't connect. The ban survives a Traefik restart, and unbanning lets the client back in.
 
 ## Configuration (GitOps)
 
@@ -90,10 +124,11 @@ After editing, apply with:
 podman compose restart fail2ban
 ```
 
-## nftables
+## Checking the ban rules
 
-If the host uses nftables instead of iptables, change the `action` line in `fail2ban/jail.d/traefik-zellij.conf`:
-
-```ini
-action = nftables-multiport[name=traefik-zellij, port="http,https"]
+```bash
+podman exec secure-zellij-fail2ban nft list ruleset          # all rules in the edge namespace
+podman exec secure-zellij-fail2ban fail2ban-client get traefik-zellij banip
 ```
+
+The rules live in the `edge` namespace, not on the host. `sudo nft list ruleset` on the host won't show them.

@@ -37,7 +37,7 @@ down:
 
 # Restart all services
 restart:
-    {{ compose }} restart
+    {{ compose }} up -d --force-recreate
 
 # Rebuild all images (no cache)
 build:
@@ -197,6 +197,10 @@ test-sso:
 # Check the fail2ban filter against sample Traefik log lines (4xx, IPv6, spoofing)
 test-filter:
     tests/fail2ban-filter.sh
+
+# End-to-end test that a ban really blocks the client (real Traefik + fail2ban, nftables)
+test-ban:
+    tests/ban-e2e.sh
 
 # End-to-end test of the dashboard unban button (real fail2ban, throwaway containers)
 test-unban:

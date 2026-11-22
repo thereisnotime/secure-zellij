@@ -338,11 +338,12 @@ access_control:
       subject: ['group:zellij']
 ```
 
-**3. `.env`.** Use whatever URL reaches Authelia from this host. Traefik runs with host networking, so it can be `127.0.0.1` or the public URL.
+**3. `.env`.** Use whatever URL reaches Authelia from Traefik: the public URL, or `127.0.0.1` if Authelia runs on this host. For `127.0.0.1`, also let Traefik's network namespace reach that port on the host (see [Fail2ban: where the ban happens](fail2ban.md#where-the-ban-happens)):
 
 ```env
 SSO_MODE=forward-auth
 SSO_FORWARD_AUTH_URL=http://127.0.0.1:9091/api/authz/forward-auth
+EDGE_PASTA_EXTRA=,-T,9091
 ```
 
 Limitation: access via `EXTRA_DOMAINS` entries such as a LAN IP won't work, because Authelia can't set a cookie for an IP. Use the hostname.
