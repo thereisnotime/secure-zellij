@@ -43,11 +43,12 @@ restart:
 build:
     {{ compose }} build --no-cache
 
-# Plain `just up` keeps the old alerter image after a git pull, so rebuild here.
+# Plain `just up` keeps the old alerter image after a git pull and skips containers whose
+# bind-mounted configs changed, so rebuild and recreate everything.
 # Upgrade: git pull, pull new images, rebuild the alerter, recreate what changed
 upgrade:
     git pull --ff-only
-    {{ compose }} up -d --build
+    {{ compose }} up -d --build --force-recreate
 
 # Pull latest upstream images
 pull:
