@@ -60,8 +60,9 @@ for f in "${live}"/*.yml; do
 done
 
 # Traefik v3 does not expand ${VAR} in static config files — do it here
-awk -v hp="${HTTP_PORT:-8080}" -v hps="${HTTPS_PORT:-8443}" \
-    '{gsub(/\$\{HTTP_PORT\}/, hp); gsub(/\$\{HTTPS_PORT\}/, hps)}1' \
+# ACME_EMAIL fills the (commented out by default) Let's Encrypt resolver's email
+awk -v hp="${HTTP_PORT:-8080}" -v hps="${HTTPS_PORT:-8443}" -v ae="${ACME_EMAIL:-}" \
+    '{gsub(/\$\{HTTP_PORT\}/, hp); gsub(/\$\{HTTPS_PORT\}/, hps); gsub(/ACME_EMAIL_PLACEHOLDER/, ae)}1' \
     /etc/traefik/traefik.yml > /tmp/traefik.yml
 
 exec traefik --configFile=/tmp/traefik.yml "$@"

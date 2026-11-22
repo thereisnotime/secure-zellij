@@ -901,8 +901,10 @@ def send_telegram(payload: dict) -> None:
 def build_webhook_body(payload: dict, template: str = "") -> dict:
     if not template:
         return payload
+    # Values go in JSON-escaped: path and user agent come from the client, and a
+    # quote in them must not be able to end the string and add fields
     try:
-        rendered = template.format(**{k: str(v) for k, v in payload.items()})
+        rendered = template.format(**{k: json.dumps(str(v))[1:-1] for k, v in payload.items()})
         return json.loads(rendered)
     except (KeyError, ValueError) as exc:
         print(f"[alerter] WEBHOOK_BODY_TEMPLATE error: {exc}", file=sys.stderr)
@@ -1229,10 +1231,15 @@ def tail(path: str) -> None:
     _backfill(path)
     _validate_config()
     _print_config()
+    at_end = True  # first open: _backfill already read what's there
     while True:
         try:
             with open(path, encoding="utf-8", errors="replace") as fh:
-                fh.seek(0, 2)
+                # After a rotation (logrotate copytruncate or a new file) read from
+                # the start, or lines written since the rotation are lost
+                if at_end:
+                    fh.seek(0, 2)
+                at_end = False
                 inode = os.fstat(fh.fileno()).st_ino
                 while True:
                     line = fh.readline()

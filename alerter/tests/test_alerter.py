@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 import alerter as a  # noqa: E402 (local package, no install)
 
 # ── _extract_ip ───────────────────────────────────────────────────────────────
@@ -887,3 +889,44 @@ def test_validate_config_accepts_ban_fields(capsys):
     finally:
         a.WEBHOOK_BODY_TEMPLATE = original
     assert capsys.readouterr().err == ""
+
+
+def test_template_values_are_json_escaped():
+    # a client-controlled value must not be able to close the string and add fields
+    payload = {"client_ip": "1.2.3.4", "path": '/x", "admin": true, "y": "', "user_agent": 'a\\b"c'}
+    body = a.build_webhook_body(payload, '{{"text": "{path}", "ua": "{user_agent}"}}')
+    assert body == {"text": '/x", "admin": true, "y": "', "ua": 'a\\b"c'}
+    assert "admin" not in body
+
+
+def test_tail_reads_lines_written_after_rotation(tmp_path, monkeypatch):
+    # copytruncate: the file shrinks, lines written since must still be processed
+    log = tmp_path / "access.log"
+    log.write_text("old line " + "x" * 4000 + "\n")  # rotated logs are big
+    seen = []
+    monkeypatch.setattr(a, "init_db", lambda: None)
+    monkeypatch.setattr(a, "_run_stats_server", lambda: None)
+    monkeypatch.setattr(a, "_backfill", lambda p: None)
+    monkeypatch.setattr(a, "BAN_ALERTS", False)
+
+    def fake_process(line):
+        seen.append(line.strip())
+        if line.strip() == "after rotation":
+            raise SystemExit
+
+    monkeypatch.setattr(a, "process_line", fake_process)
+    real_sleep = a.time.sleep
+    state = {"n": 0}
+
+    def fake_sleep(s):
+        state["n"] += 1
+        if state["n"] == 2:  # rotate: truncate and write a new line
+            log.write_text("after rotation\n")
+        if state["n"] > 50:
+            raise SystemExit
+        real_sleep(0.01)
+
+    monkeypatch.setattr(a.time, "sleep", fake_sleep)
+    with pytest.raises(SystemExit):
+        a.tail(str(log))
+    assert seen == ["after rotation"]

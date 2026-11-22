@@ -22,7 +22,7 @@ Templates trip people up in three ways, so read this before copying the examples
 2. **Wrap the value in single quotes in `.env`.** `just` reads `.env` too, and without quotes it either refuses to parse the line (every recipe then fails) or strips the double quotes out of the JSON.
 3. **Use only fields every event has:** `event`, `timestamp`, `client_ip`, `status`, `service`, `sso_user`, `sso_email`, `path`, `user_agent`, `x_forwarded_for`. One template is used for all three events, and a ban-only field such as `{jail}` makes connection alerts fall back to the default payload.
 
-Values are inserted without JSON escaping. A `"` or `\` in a value breaks the JSON, and again the default payload goes out. `user_agent`, `path` and `x_forwarded_for` come from the client and can contain either, so leave them out of templates for receivers that reject the default payload.
+Values are JSON-escaped before they go in, so a `"` or `\` in a client-controlled value (`user_agent`, `path`, `x_forwarded_for`) can't break the JSON or add fields. Put placeholders inside JSON strings: `"{path}"`.
 
 ```dotenv
 WEBHOOK_BODY_TEMPLATE='{{"text": "secure-zellij {event} from {client_ip} at {timestamp}"}}'

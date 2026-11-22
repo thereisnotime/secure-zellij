@@ -256,14 +256,16 @@ Branch on `event` in the receiver if the three need different handling.
 If the receiving service expects a different JSON shape, set `WEBHOOK_BODY_TEMPLATE`. The template is filled in with Python's `str.format`: `{field}` is replaced by the field's value, and literal braces of the JSON itself have to be doubled (`{{` and `}}`):
 
 ```env
-WEBHOOK_BODY_TEMPLATE={{"text": "Zellij connection from {client_ip} on {path} at {timestamp}"}}
+WEBHOOK_BODY_TEMPLATE='{{"text": "Zellij connection from {client_ip} on {path} at {timestamp}"}}'
 ```
+
+Wrap the value in single quotes. `just` reads `.env` too, and an unquoted JSON value either fails to parse or loses its double quotes.
 
 Any field from the [table above](#webhook-payload) can be a placeholder. Things to know:
 
 - The template applies to all three events. A placeholder that an event doesn't have (`{jail}`, `{bantime}`, `{failures}` or `{unbanned_by}` in a connection alert) makes that alert fall back to the default payload. Stick to the shared fields if one template has to serve every event.
-- Values are inserted as they are, without JSON escaping. A value containing `"` or `\` (a user agent can) produces invalid JSON, and that alert falls back to the default payload.
-- On a fallback the alerter logs `WEBHOOK_BODY_TEMPLATE error: ...` to stderr. At startup it checks the template against a sample connection alert and prints `WARNING: WEBHOOK_BODY_TEMPLATE is invalid` if it doesn't render.
+- Values are JSON-escaped before they go in, so put placeholders inside JSON strings (`"{path}"`). A `"` or `\` in a client-controlled value like `user_agent` or `path` can't end the string and add fields of its own.
+- On a fallback the alerter logs `WEBHOOK_BODY_TEMPLATE error: ...` to stderr. At startup it checks the template against a sample event with every field and prints `WARNING: WEBHOOK_BODY_TEMPLATE is invalid` if it doesn't render.
 - The template only affects generic webhooks. Telegram and Discord always get the text messages shown above.
 
 ## SSO user

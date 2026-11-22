@@ -55,13 +55,13 @@ HTTPS_PORT=443
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: "you@example.com"
+      email: "ACME_EMAIL_PLACEHOLDER"   # filled from ACME_EMAIL in .env
       storage: /letsencrypt/acme.json
       httpChallenge:
         entryPoint: web
 ```
 
-Type the address into the file. The entrypoint doesn't substitute `ACME_EMAIL` from `.env`, and a leftover `ACME_EMAIL_PLACEHOLDER` would go to Let's Encrypt as is.
+Set `ACME_EMAIL` in `.env`. Traefik's entrypoint replaces `ACME_EMAIL_PLACEHOLDER` with it at startup, so leave the placeholder in the file.
 
 **3. Use it on the routers.** Replace `tls: {}` on the `zellij` and `stats` routers in `traefik/dynamic/routers.yml`, and on `sso-oauth2` / `sso-callback` in `traefik/sso/` if you use SSO:
 
@@ -88,7 +88,7 @@ Replace `httpChallenge` in the resolver with `dnsChallenge` (Cloudflare as the e
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: "you@example.com"
+      email: "ACME_EMAIL_PLACEHOLDER"   # filled from ACME_EMAIL in .env
       storage: /letsencrypt/acme.json
       dnsChallenge:
         provider: cloudflare

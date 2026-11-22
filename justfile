@@ -73,6 +73,10 @@ logs:
 logs-traefik:
     {{ compose }} logs -f traefik
 
+# Follow fail2ban logs only
+logs-fail2ban:
+    {{ compose }} logs -f fail2ban
+
 # Follow alerter logs only
 logs-alerter:
     {{ compose }} logs -f alerter
@@ -123,10 +127,10 @@ status:
     @{{ zellij }} web --status 2>/dev/null || echo "  offline"
     @echo "│"
     @echo "├─ Access ─────────────────────────────────────────────────"
-    @{ echo "${DOMAIN}"; [ -n "${EXTRA_DOMAINS:-}" ] && echo "${EXTRA_DOMAINS}" | tr ',' '\n'; } | awk '!seen[$0]++' | while read d; do echo "  https://${d}:${HTTPS_PORT:-443}"; done
+    @{ echo "${DOMAIN}"; [ -n "${EXTRA_DOMAINS:-}" ] && echo "${EXTRA_DOMAINS}" | tr ',' '\n'; } | awk '!seen[$0]++' | while read d; do echo "  https://${d}:${HTTPS_PORT:-8443}"; done
     @echo "│"
     @echo "├─ Sessions ───────────────────────────────────────────────"
-    @{{ zellij }} list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk -v base="https://${DOMAIN}:${HTTPS_PORT:-443}" '{print "  " $1 "  →  " base "/" $1}' || echo "  none"
+    @{{ zellij }} list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk -v base="https://${DOMAIN}:${HTTPS_PORT:-8443}" '{print "  " $1 "  →  " base "/" $1}' || echo "  none"
     @echo "│"
     @echo "├─ Tokens ─────────────────────────────────────────────────"
     @{{ zellij }} web --list-tokens 2>/dev/null | sed 's/^/  /' || echo "  none"
@@ -266,7 +270,7 @@ sso-check:
         url="${SSO_OIDC_ISSUER_URL%/}/.well-known/openid-configuration"
         echo "discovery: $url"
         curl -fsS "$url" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("issuer:", d["issuer"]); print("scopes:", " ".join(d.get("scopes_supported", [])))'
-        echo "IdP redirect URI to register: https://${DOMAIN}$( [ "${HTTPS_PORT:-443}" = 443 ] || echo ":${HTTPS_PORT}" )/oauth2/callback"
+        echo "IdP redirect URI to register: https://${DOMAIN}$( [ "${HTTPS_PORT:-8443}" = 443 ] || echo ":${HTTPS_PORT:-8443}" )/oauth2/callback"
         ;;
       forward-auth)
         [ -n "${SSO_FORWARD_AUTH_URL:-}" ] || { echo "missing SSO_FORWARD_AUTH_URL"; exit 1; }
