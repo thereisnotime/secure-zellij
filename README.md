@@ -23,7 +23,7 @@ A podman compose stack that puts [Traefik](https://traefik.io) in front of the [
 - **TLS out of the box** — self-signed by default, one config change to switch to Let's Encrypt
 - **Real IP forwarding** — `X-Real-IP` / `X-Forwarded-For` correctly extracted and passed through
 - **Connection alerts** — fires on WebSocket connections, not page loads, so only actual terminal sessions trigger notifications
-- **Ban alerts** — a notification whenever fail2ban bans an IP, with the SSO user it was signed in as
+- **Ban alerts** — a notification whenever fail2ban bans an IP, with the SSO user it was signed in as; active and recent bans are listed on the stats dashboard
 - **Telegram, Discord + generic webhooks** — structured JSON payload with IP, user agent, path, and timestamp
 - **Security headers** — HSTS, CSP, XSS protection, clickjacking protection
 - **Optional SSO** — Authelia, Keycloak, Authentik (or any OIDC IdP) in front of zellij via oauth2-proxy or native forward-auth

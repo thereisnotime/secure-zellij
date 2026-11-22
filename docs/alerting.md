@@ -177,6 +177,10 @@ BAN_ALERTS=false
 
 The alerter log prints `[alerter] Ban: 203.0.113.9 (alice) in traefik-zellij` for each one.
 
+### On the stats dashboard
+
+`/stats` shows a **Banned Now** and a **Bans (24h)** card plus a **fail2ban Bans** table: time, SSO user, IP, jail, failures, the last request that counted, and whether the ban is still active (and until when). It reads fail2ban's database directly, so it lists every ban fail2ban still keeps (`dbpurgeage`, 1 day by default), including ones from before the alerter started. `BAN_ALERTS=false` only stops the notifications; the dashboard section stays.
+
 ## SSO user
 
 When [SSO](sso.md) is on, Traefik's forwardAuth middleware adds the signed-in identity to every request and the access log records it. The alerter reads it from there and puts it in connection and [ban](#ban-alerts) alerts, webhook payloads and the stats dashboard (a **User** column under Recent Connections and an **SSO Users (1h)** card).

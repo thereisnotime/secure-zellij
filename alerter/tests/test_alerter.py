@@ -533,3 +533,79 @@ def test_ban_watcher_unreadable_db(tmp_path, capsys):
     db.write_text("not a database")
     assert a.BanWatcher(str(db)).poll() == []
     assert "fail2ban DB not readable" in capsys.readouterr().err
+
+
+# ── bans on the dashboard ─────────────────────────────────────────────────────
+
+
+def test_get_bans_disabled_or_missing(tmp_path):
+    assert a.get_bans("") == {
+        "enabled": False,
+        "available": False,
+        "active": 0,
+        "last_24h": 0,
+        "recent": [],
+    }
+    missing = a.get_bans(str(tmp_path / "nope.sqlite3"))
+    assert missing["enabled"] is True
+    assert missing["available"] is False
+
+
+def test_get_bans_lists_active_and_expired(tmp_path, monkeypatch):
+    monkeypatch.setattr(a, "SSO_MODE", "oauth2-proxy")
+    db = str(tmp_path / "fail2ban.sqlite3")
+    _make_f2b_db(db)
+    now = int(a.time.time())
+    _add_ban(db, "198.51.100.1", now - 3 * 86400)  # expired, outside 24h
+    _add_ban(db, "198.51.100.2", now - 7200)  # expired 1h ago
+    _add_ban(db, "198.51.100.3", now - 60, _ban_data(_ban_line("alice"), _ban_line("bob")))
+    bans = a.get_bans(db)
+    assert bans["available"] is True
+    assert bans["active"] == 1
+    assert bans["last_24h"] == 2
+    newest = bans["recent"][0]
+    assert newest["ip"] == "198.51.100.3"
+    assert newest["active"] is True
+    assert newest["sso_user"] == "alice, bob"
+    assert newest["failures"] == 2
+    assert newest["path"] == "/command/login"
+    assert newest["until"].startswith(str(a.datetime.now(a.UTC).year))
+    assert [b["active"] for b in bans["recent"]] == [True, False, False]
+
+
+def test_get_bans_permanent(tmp_path):
+    import sqlite3
+
+    db = str(tmp_path / "fail2ban.sqlite3")
+    _make_f2b_db(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO bans (jail, ip, timeofban, bantime, data) VALUES ('j', '1.2.3.4', 1, -1, '{}')"
+        )
+    ban = a.get_bans(db)["recent"][0]
+    assert ban["active"] is True
+    assert ban["until"] == ""
+
+
+def test_get_bans_unreadable_db(tmp_path):
+    db = tmp_path / "fail2ban.sqlite3"
+    db.write_text("not a database")
+    assert a.get_bans(str(db))["available"] is False
+
+
+def test_stats_api_includes_bans(tmp_path, monkeypatch):
+    db = str(tmp_path / "fail2ban.sqlite3")
+    _make_f2b_db(db)
+    _add_ban(db, "198.51.100.9", int(a.time.time()))
+    monkeypatch.setattr(a, "DB_PATH", str(tmp_path / "stats.db"))
+    monkeypatch.setattr(a, "F2B_DB", db)
+    a.init_db()
+    bans = a.get_stats()["bans"]
+    assert bans["enabled"] is True
+    assert bans["active"] == 1
+    assert bans["recent"][0]["ip"] == "198.51.100.9"
+
+
+def test_dashboard_escapes_quotes():
+    # client-controlled values (user agent, SSO user) go into title="..." attributes
+    assert ".replace(/\"/g,'&quot;')" in a._HTML

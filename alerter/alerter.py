@@ -102,6 +102,10 @@ _HTML = """<!DOCTYPE html>
     body.sso .sso-col { display: table-cell; }
     .sso-card { display: none; }
     body.sso .sso-card { display: block; }
+    .ban-only { display: none; }
+    body.bans .ban-only { display: block; }
+    .card.ban-only .val { color: #f7768e; }
+    .ban-active { color: #f7768e; }
     .empty { color: var(--dim); padding: 0.5rem 0.6rem; font-style: italic; }
   </style>
 </head>
@@ -112,6 +116,8 @@ _HTML = """<!DOCTYPE html>
     <div class="card"><div class="val" id="c-active">&#x2014;</div><div class="lbl">Active Sessions (5m)</div></div>
     <div class="card"><div class="val" id="c-ips1h">&#x2014;</div><div class="lbl">Unique IPs (1h)</div></div>
     <div class="card sso-card"><div class="val" id="c-users1h">&#x2014;</div><div class="lbl">SSO Users (1h)</div></div>
+    <div class="card ban-only"><div class="val" id="c-banned">&#x2014;</div><div class="lbl">Banned Now</div></div>
+    <div class="card ban-only"><div class="val" id="c-bans24h">&#x2014;</div><div class="lbl">Bans (24h)</div></div>
     <div class="card"><div class="val" id="c-today">&#x2014;</div><div class="lbl">Connections Today</div></div>
     <div class="card"><div class="val" id="c-total">&#x2014;</div><div class="lbl">All-Time</div></div>
   </div>
@@ -136,9 +142,17 @@ _HTML = """<!DOCTYPE html>
     <tbody id="tb-recent"><tr><td colspan="5" class="empty">loading&hellip;</td></tr></tbody></table>
   </div>
 
+  <div class="section ban-only">
+    <h2>fail2ban Bans</h2>
+    <table><thead><tr><th>Time</th><th class="sso-col">User</th><th>IP</th><th>Jail</th><th>Failures</th><th>Last Request</th><th>Status</th></tr></thead>
+    <tbody id="tb-bans"><tr><td colspan="7" class="empty">loading&hellip;</td></tr></tbody></table>
+  </div>
+
   <script>
     function esc(s) {
-      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      // also quotes: values land in title="..." attributes and come from clients
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
     function fmtTs(s) {
       try { return new Date(s).toLocaleString(); } catch(_) { return s; }
@@ -156,6 +170,26 @@ _HTML = """<!DOCTYPE html>
         document.getElementById('c-total').textContent  = s.connections_total;
         document.getElementById('status').textContent   = 'updated ' + new Date().toLocaleTimeString();
         document.body.classList.toggle('sso', d.sso_enabled);
+        document.body.classList.toggle('bans', d.bans.enabled);
+        if (d.bans.enabled) {
+          document.getElementById('c-banned').textContent  = d.bans.active;
+          document.getElementById('c-bans24h').textContent = d.bans.last_24h;
+          document.getElementById('tb-bans').innerHTML = !d.bans.available
+            ? '<tr><td colspan="7" class="empty">fail2ban database not readable yet</td></tr>'
+            : d.bans.recent.length
+            ? d.bans.recent.map(b =>
+                '<tr><td>' + fmtTs(b.ts) + '</td>' +
+                '<td class="sso-col" title="' + esc(b.sso_user) + '">' + (b.sso_user ? esc(b.sso_user) : '<em>none</em>') + '</td>' +
+                '<td>' + esc(b.ip) + '</td>' +
+                '<td>' + esc(b.jail) + '</td>' +
+                '<td>' + esc(b.failures) + '</td>' +
+                '<td title="' + esc(b.user_agent) + '">' + esc(b.path) + (b.status !== '' ? ' (' + esc(b.status) + ')' : '') + '</td>' +
+                '<td>' + (b.active
+                  ? '<span class="ban-active">banned' + (b.until ? ' until ' + fmtTs(b.until) : ' permanently') + '</span>'
+                  : 'expired') + '</td></tr>'
+              ).join('')
+            : '<tr><td colspan="7" class="empty">no bans in the last 24h</td></tr>';
+        }
 
         const hc = d.hourly_chart;
         const maxV = Math.max(...hc.map(h => h.count), 1);
@@ -259,6 +293,57 @@ def _fill_hourly(rows: list, hours: int = 24) -> list[dict]:
     ]
 
 
+def get_bans(path: str, limit: int = 50) -> dict:
+    """Recent bans straight from fail2ban's DB (it keeps them for dbpurgeage, 1d)."""
+    result: dict = {"enabled": bool(path), "available": False, "active": 0, "last_24h": 0}
+    result["recent"] = []
+    if not path or not os.path.exists(path):
+        return result
+    now = int(time.time())
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+        try:
+            active = conn.execute(
+                "SELECT COUNT(DISTINCT ip) FROM bans WHERE bantime < 0 OR timeofban + bantime > ?",
+                (now,),
+            ).fetchone()[0]
+            last_24h = conn.execute(
+                "SELECT COUNT(*) FROM bans WHERE timeofban >= ?", (now - 86400,)
+            ).fetchone()[0]
+            rows = conn.execute(
+                "SELECT jail, ip, timeofban, bantime, data FROM bans"
+                " ORDER BY timeofban DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return result
+    recent = []
+    for jail, ip, timeofban, bantime, data in rows:
+        p = _build_ban_payload(jail, ip or "unknown", timeofban, bantime, data)
+        permanent = bantime < 0
+        recent.append(
+            {
+                "ts": p["timestamp"],
+                "ip": p["client_ip"],
+                "jail": jail,
+                "failures": p["failures"],
+                "bantime": bantime,
+                "sso_user": p["sso_user"],
+                "path": p["path"],
+                "status": p["status"],
+                "user_agent": p["user_agent"],
+                "active": permanent or timeofban + bantime > now,
+                "until": ""
+                if permanent
+                else datetime.fromtimestamp(timeofban + bantime, UTC).isoformat(),
+            }
+        )
+    result.update(available=True, active=active, last_24h=last_24h, recent=recent)
+    return result
+
+
 def get_stats() -> dict:
     now = datetime.now(UTC)
     today_start = now.strftime("%Y-%m-%dT00:00:00")
@@ -310,6 +395,7 @@ def get_stats() -> dict:
     return {
         "generated_at": now.isoformat(),
         "sso_enabled": SSO_MODE != "off",
+        "bans": get_bans(F2B_DB),
         "summary": {
             "active_sessions": active,
             "connected_ips_1h": ips_1h,
