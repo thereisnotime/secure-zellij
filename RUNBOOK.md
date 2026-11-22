@@ -23,7 +23,7 @@ just start      # compose up -d, start the zellij web server, print status
 just stop       # compose down, stop the zellij web server
 just up         # compose up -d (containers only)
 just down       # compose down (containers only)
-just restart    # recreate every container (up -d --force-recreate)
+just restart    # stop and start every container (down, then up -d)
 just status     # zellij web server, URLs, sessions, tokens, containers
 just open       # open https://DOMAIN:HTTPS_PORT in the browser
 ```
@@ -46,7 +46,7 @@ just open       # open https://DOMAIN:HTTPS_PORT in the browser
 ### Upgrading
 
 ```bash
-just upgrade    # git pull --ff-only, then up -d --build --force-recreate
+just upgrade    # git pull --ff-only, build, then down and up -d
 ```
 
 This pulls the repo, rebuilds the alerter and recreates every container, so changed bind-mounted configs and the new images are all picked up. `git pull --ff-only` stops if you have local edits to files that changed upstream: commit them on a branch or `git stash` first. Settings that live in an untracked `compose.override.yaml` don't get in the way.

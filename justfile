@@ -35,20 +35,25 @@ stop:
 down:
     {{ compose_all }} down
 
-# Restart all services
+# Traefik and fail2ban live in edge's network namespace, so containers can't be
+# recreated in place: podman won't remove edge while they're joined. Stop all, start all.
+# Restart all services (picks up .env and config changes)
 restart:
-    {{ compose }} up -d --force-recreate
+    {{ compose_all }} down
+    {{ compose }} up -d
 
 # Rebuild all images (no cache)
 build:
     {{ compose }} build --no-cache
 
 # Plain `just up` keeps the old alerter image after a git pull and skips containers whose
-# bind-mounted configs changed, so rebuild and recreate everything.
-# Upgrade: git pull, pull new images, rebuild the alerter, recreate what changed
+# bind-mounted configs changed. Build first so the stack keeps serving meanwhile.
+# Upgrade: git pull, rebuild the alerter, then stop and start everything
 upgrade:
     git pull --ff-only
-    {{ compose }} up -d --build --force-recreate
+    {{ compose }} build
+    {{ compose_all }} down
+    {{ compose }} up -d
 
 # Pull latest upstream images
 pull:

@@ -52,7 +52,8 @@ Two things to check first:
 
 - The fail2ban filter is about 80 times cheaper per line and matches the same
   lines. At 20 req/s fail2ban drops from 19% to 2% of a core.
-- `just restart` recreates the containers in order.
+- `just restart` and `just upgrade` stop the whole stack and start it again.
+  Containers in a shared network namespace can't be recreated in place.
 - Traefik v3.7.19, Python 3.15, uv 0.13, current GitHub Actions; images pinned by
   digest.
 - The test scripts work with podman-compose as well as docker-compose.
