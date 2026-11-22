@@ -1,61 +1,74 @@
-# Multi-domain and LAN Access
+# Multiple domains and LAN access
 
-By default Traefik only accepts requests matching `DOMAIN`. Use `EXTRA_DOMAINS` to add additional hostnames or IPs — useful for LAN access, alternate DNS names, or accessing by IP directly.
+Traefik only answers requests whose `Host` header matches `DOMAIN`. This page covers adding more names or IPs with `EXTRA_DOMAINS` (a LAN IP, a `.lan` hostname), making those names resolve, and reaching the stack from outside your network.
 
-## Configuration
+## EXTRA_DOMAINS
 
-```env
+```dotenv
 DOMAIN=zellij.example.com
-EXTRA_DOMAINS=192.168.1.100,fenrir.lan,zellij.local
+EXTRA_DOMAINS=192.168.1.100,fenrir.lan
 ```
 
-`EXTRA_DOMAINS` is comma-separated, no spaces. Traefik builds the router rule as:
+Comma-separated, no spaces. `traefik/entrypoint.sh` turns the list into one router rule, used by every router (zellij, `/stats`, the HTTP redirect and the SSO routes):
 
-```
-Host(`zellij.example.com`) || Host(`192.168.1.100`) || Host(`fenrir.lan`) || Host(`zellij.local`)
+```text
+Host(`zellij.example.com`) || Host(`192.168.1.100`) || Host(`fenrir.lan`)
 ```
 
-Restart after changing: `just down && just up`
+A request for any other host gets a 404 from Traefik. 404 is a 4xx, so a client that keeps trying a wrong name eventually gets banned by [fail2ban](fail2ban.md).
+
+Apply a change with `just restart`. The variable is read when the Traefik container is created, so a plain restart of the container isn't enough. `just status` prints the resulting URLs.
 
 ## LAN access by IP
 
-The simplest approach — no DNS required. Add your machine's LAN IP to `EXTRA_DOMAINS`:
+Add the host's LAN IP to `EXTRA_DOMAINS` and connect to `https://192.168.1.100:8443` (or whatever `HTTPS_PORT` is). No DNS needed.
 
-```env
-EXTRA_DOMAINS=192.168.1.100
-```
+Expect a certificate warning. The default certificate is self-signed, and a Let's Encrypt certificate can't cover a private IP. If you want no warning on the LAN, use a hostname and a certificate from your own CA ([TLS: your own certificate](tls.md#your-own-certificate)).
 
-Clients on the same network connect to `https://192.168.1.100:8443`. They will get a self-signed cert warning since the cert has no SAN for an IP. Accept it or see [TLS docs](tls.md) for a proper cert.
+## LAN hostnames
 
-## Local hostname (`.local` / `.lan`)
+Pick a name, add it to `EXTRA_DOMAINS`, and make it resolve on the clients. Either add it to `/etc/hosts` on each client:
 
-Add a hostname to `/etc/hosts` on the server:
-
-```
+```text
 192.168.1.100 fenrir.lan
 ```
 
-Then add it to `EXTRA_DOMAINS`. On client machines, also add the entry to their `/etc/hosts`, or configure your router's local DNS.
+or add a local DNS record on the router or resolver, so every LAN client picks it up:
 
-## Router/DNS-based resolution
+| Resolver | Where |
+|---|---|
+| Pi-hole | Local DNS, DNS Records |
+| AdGuard Home | Filters, DNS rewrites |
+| OpenWrt | Network, DHCP and DNS, Hostnames |
+| pfSense / OPNsense | Services, DNS Resolver, Host Overrides |
 
-If your router supports local DNS (most do under "LAN hostname" or "static DNS"):
+## Extra domains with SSO
 
-1. Add an A record: `fenrir.lan → 192.168.1.100`
-2. All LAN clients resolve it automatically — no `/etc/hosts` edits per machine
+With [SSO](sso.md) on, every name in `EXTRA_DOMAINS` also has to work with the IdP:
 
-Common setups:
-- **Pi-hole**: add a local DNS record in Settings → Local DNS
-- **AdGuard Home**: Filters → DNS rewrites
-- **OpenWrt**: Network → DHCP and DNS → Hostnames
-- **pfSense/OPNsense**: Services → DNS Resolver → Host Overrides
+- **oauth2-proxy mode:** register `https://<name>:<port>/oauth2/callback` for each name with the IdP (no `:<port>` when it is 443), and list the names in `SSO_EXTRA_REDIRECT_DOMAINS` so oauth2-proxy will redirect back to them after login.
+- **forward-auth mode:** the IdP sets its session cookie for its own domain, so names outside that domain won't stay logged in. Authelia can't set a cookie for an IP at all.
 
-## Port forwarding for external access
+Logging in by bare IP doesn't work in either mode. Use a hostname.
 
-To expose over the internet, forward ports 80 and 443 on your router to the server, use a proper domain with DNS pointing to your public IP, and switch to Let's Encrypt (see [TLS docs](tls.md)).
+## Access from outside the LAN
 
-Alternatively use a tunnel (no port forwarding needed):
+**Port forwarding.** Forward ports 80 and 443 on the router to the host's `HTTP_PORT` and `HTTPS_PORT` (8080 and 8443 by default), point a public DNS name at your IP, set it as `DOMAIN`, and switch to [Let's Encrypt](tls.md#lets-encrypt-http-01). Clients connect directly, so Traefik logs, alerts on and bans their real IPs.
 
-- **Cloudflare Tunnel** — `cloudflared tunnel` proxies to `https://127.0.0.1:8443`
-- **Tailscale Funnel** — exposes over your tailnet with auto-TLS
-- **ngrok** — quick but rate-limited on free tier
+**VPN.** With [Tailscale](https://tailscale.com) or WireGuard, clients reach the host on its VPN address. Add that address, or the MagicDNS name, to `EXTRA_DOMAINS`. Traefik sees each client's VPN address, so bans and alerts stay per client.
+
+**Tunnels and proxies on the host** (Cloudflare Tunnel, `tailscale serve`/`tailscale funnel`, ngrok) proxy to `https://127.0.0.1:${HTTPS_PORT}`. This works, with two catches:
+
+- Every request arrives from the host itself. Traefik doesn't trust `X-Forwarded-For`, so the access log, alerts and the `/stats` dashboard show the host's address for every client.
+- fail2ban ignores the host's own addresses (`ignoreself`), so nothing that comes through the tunnel ever gets banned. Rate limiting is per source IP too, so all tunnel users share one bucket.
+
+If you use a tunnel, put the tunnel provider's own access controls (Cloudflare Access, a tailnet ACL) in front of it, or enable [SSO](sso.md).
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| 404 on a new name | `EXTRA_DOMAINS` changed but Traefik wasn't recreated (`just restart`), or a typo or space in the list. `podman exec secure-zellij-traefik grep rule /etc/traefik/dynamic-live/routers.yml` shows the rule Traefik is using. |
+| Connection refused from another machine | The host firewall blocks `HTTPS_PORT` (firewalld, ufw), or you are using the default 443 instead of the configured port. |
+| Connection refused from one client only, others are fine | That client is banned. Check `just fail2ban-banned`, and see [Fail2ban](fail2ban.md). |
+| SSO login loops on the extra name | The IdP has no redirect URI for that name, or the name is an IP. See [Extra domains with SSO](#extra-domains-with-sso). |

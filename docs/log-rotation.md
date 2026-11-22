@@ -1,6 +1,6 @@
-# Log Rotation
+# Log rotation
 
-Without rotation, the Traefik access log grows unbounded and will eventually exhaust disk space. This setup rotates it daily and keeps 14 days of history.
+Traefik writes one JSON line per request to `access.log` on the `traefik-logs` volume, and nothing in the stack ever trims it. Install the bundled logrotate config to rotate it daily and keep 14 days. fail2ban and the alerter both read this file, so rotation has to happen in a way they can follow.
 
 ## Install
 
@@ -8,34 +8,53 @@ Without rotation, the Traefik access log grows unbounded and will eventually exh
 just logrotate-install
 ```
 
-This requires `sudo`. It reads the actual volume mount path from Podman, substitutes it into `logrotate.conf`, and writes the result to `/etc/logrotate.d/secure-zellij`.
+This needs `sudo`. It looks up the volume's mount point (with rootless podman, somewhere under `~/.local/share/containers/storage/volumes/secure-zellij_traefik-logs/_data`), puts it into `logrotate.conf` in place of `LOG_PATH`, and writes the result to `/etc/logrotate.d/secure-zellij`. The system's logrotate timer or cron job then runs it daily.
 
-## Test (dry-run)
+The volume exists only after the stack has been started once. Run `just up` first, and install again after `just clean`, which deletes the volume.
 
-```bash
-just logrotate-run
-```
-
-Runs `logrotate --debug` — shows what would happen without touching any files.
-
-## Apply immediately
+## Test and run
 
 ```bash
-just logrotate-run force=true
+just logrotate-run              # dry run: logrotate --debug, changes nothing
+just logrotate-run force=true   # rotate now, whatever the schedule says
 ```
 
-Forces an immediate rotation regardless of the schedule.
+## What the config does
 
-## What happens during rotation
+| Directive | Effect |
+|---|---|
+| `daily`, `rotate 14` | One file per day, 14 kept, older ones deleted |
+| `compress`, `delaycompress` | Rotated files are gzipped, except the most recent one (`access.log.1`) |
+| `missingok`, `notifempty` | No error if the log is missing, no rotation if it is empty |
+| `copytruncate` | Copy `access.log` to `access.log.1`, then truncate `access.log` in place |
 
-- The current `access.log` is renamed and compressed (previous day's file is compressed with a one-rotation delay via `delaycompress`).
-- Traefik receives `SIGUSR1`, which causes it to close and reopen its log file handle — no restart needed, no log entries lost.
-- Logs older than 14 days are deleted automatically.
-- Missing or empty log files are silently skipped (`missingok`, `notifempty`).
+`copytruncate` is there because logrotate runs as root, and root's podman can't see your rootless containers. The usual approach, renaming the file and sending Traefik `USR1` with `podman kill`, would never reach Traefik, and it would keep writing to the renamed file. With `copytruncate`, Traefik keeps its file handle. It writes with `O_APPEND`, so new lines start at the beginning of the emptied file.
 
-## Alerter behaviour
+The cost: lines Traefik writes between the copy and the truncate are lost. At normal traffic levels that is a few lines a day at most.
 
-The alerter watches the log file by inode, not by path, so it handles rotation transparently without needing a restart.
+## fail2ban and the alerter
+
+Both notice the truncation and carry on without a restart:
+
+- **fail2ban** sees the file shrink, or its first line change, and reads it again from the start.
+- **The alerter** checks the file's inode and size every 0.3 seconds when idle. On a new inode or a shorter file it reopens it and continues from the end, logging `[alerter] Log rotated, reopening ...`.
+
+Connection history on the `/stats` dashboard is in the alerter's own database (`stats.db` on the `stats-data` volume), so rotating or deleting the access log doesn't remove it.
+
+## Checking
+
+```bash
+ls -l "$(podman volume inspect secure-zellij_traefik-logs --format '{{.Mountpoint}}')"
+just logs-alerter      # look for "Log rotated, reopening"
+```
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `just logrotate-install` fails at `podman volume inspect` | The stack has never been started, or `just clean` removed the volume. Run `just up`, then install again. |
+| Nothing is rotated | The system logrotate isn't running (`systemctl status logrotate.timer`, or cron), or the log is empty. On SELinux hosts, also check `sudo ausearch -m AVC -ts recent` for `logrotate_t` denials on the volume. |
+| `access.log` is missing, `access.log.1` keeps growing, no bans or alerts | An older install that renamed the file and sent `USR1`, which never reached Traefik. Install again to get `copytruncate`, then `just restart` so Traefik opens a fresh `access.log`. |
 
 ## Uninstall
 
