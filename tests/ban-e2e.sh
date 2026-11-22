@@ -19,6 +19,8 @@ NAMES=(sz-ban-edge sz-ban-traefik sz-ban-f2b sz-ban-backend)
 
 WORK=$(mktemp -d)
 cleanup() {
+    # containers that joined edge's namespace first, podman won't remove edge before them
+    podman rm -f -v --ignore sz-ban-traefik sz-ban-f2b sz-ban-backend >/dev/null 2>&1 || true
     podman rm -f -v --ignore "${NAMES[@]}" >/dev/null 2>&1 || true
     rm -rf "$WORK"
 }
