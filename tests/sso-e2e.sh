@@ -118,6 +118,10 @@ PY
         -v "$WORK/traefik/sso:/etc/traefik/sso:ro,Z" \
         --entrypoint /entrypoint.sh "$(image traefik)" >/dev/null
     for _ in $(seq 30); do "${C[@]}" -o /dev/null "$URL/" && break; sleep 1; done
+    if [ "$(podman inspect sz-e2e-traefik --format '{{.State.Running}}')" != true ]; then
+        echo "  Traefik isn't running, its last log lines:"
+        podman logs --tail 15 sz-e2e-traefik 2>&1 | sed 's/^/    /'
+    fi
     sleep 2
     rm -f "$WORK/jar"
 }
