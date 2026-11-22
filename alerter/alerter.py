@@ -528,7 +528,8 @@ def process_line(line: str) -> None:
         for k in stale:
             del _last_alert[k]
     ip = payload["client_ip"]
-    if now - _last_alert.get(ip, 0.0) < ALERT_COOLDOWN_SECONDS:
+    last = _last_alert.get(ip)
+    if last is not None and now - last < ALERT_COOLDOWN_SECONDS:
         print(f"[alerter] Suppressed duplicate alert for {ip}", flush=True)
         return
     _last_alert[ip] = now

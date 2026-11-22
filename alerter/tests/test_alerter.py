@@ -166,6 +166,21 @@ def test_dedup_suppresses_repeat_within_cooldown(mocker, capsys):
     a._last_alert.clear()
 
 
+def test_first_alert_fires_shortly_after_boot(mocker):
+    # time.monotonic() counts from boot, so it can be below the cooldown on a fresh host
+    a._last_alert.clear()
+    mocker.patch("alerter.time.monotonic", return_value=5.0)
+    send_tg = mocker.patch.object(a, "send_telegram")
+    mocker.patch.object(a, "send_webhooks")
+    mocker.patch.object(a, "send_discord")
+    entry = json.dumps(
+        {"DownstreamStatus": a.ALERT_ON_STATUS, "RequestPath": "/s", "ClientAddr": "5.5.5.5:9"}
+    )
+    a.process_line(entry)
+    assert send_tg.call_count == 1
+    a._last_alert.clear()
+
+
 def test_dedup_allows_after_cooldown(mocker):
     a._last_alert.clear()
     send_tg = mocker.patch.object(a, "send_telegram")
