@@ -1,17 +1,17 @@
 # Performance
 
 How much CPU, memory and disk the stack uses, and the benchmark behind the
-fail2ban filter. The numbers come from one machine, measured on 2026-11-22. Expect
-the same order of magnitude elsewhere, not the exact figures.
+fail2ban filter. The numbers come from one machine, measured on 2026-11-23 with the
+`edge` network namespace layout (Traefik and fail2ban behind pasta, bans in
+nftables). Expect the same order of magnitude elsewhere, not the exact figures.
 
 Rerun them yourself with `just bench` (or `just bench stack` / `just bench filter`).
 It uses throwaway `sz-bench-*` containers on spare ports, leaves the real stack alone,
 and prints the tables below as Markdown.
 
-**Short version:** about **110 MiB of RAM and ~0% CPU when idle**. One client
-at the rate limit (20 req/s) costs about **20% of one core**, nearly all of it
-Traefik.
-Images take about **560 MB** of disk.
+**Short version:** about **160 MiB of RAM and ~0% CPU when idle**. One client
+at the rate limit (20 req/s) costs about **22% of one core**, nearly all of it
+Traefik. Images take about **560 MB** of disk.
 
 ## Test setup
 
@@ -23,7 +23,9 @@ Images take about **560 MB** of disk.
 | Stack | Traefik v3.7.19, fail2ban 1.1.1, alerter (Python 3.15.2), oauth2-proxy v7.15.6 |
 
 The measurements used a throwaway copy of the stack on spare ports, with the repo's
-own configs. The one change was patching the backend ports. A small Python HTTP
+own configs and the same layout as `compose.yaml`: `edge` owns a pasta network
+namespace and the published ports, and Traefik and fail2ban join it. The one
+change was patching the backend ports. A small Python HTTP
 server stood in for zellij, answering with 2 KB bodies, and a mock OIDC provider
 stood in for the IdP. Neither one is counted.
 
@@ -34,6 +36,9 @@ stood in for the IdP. Neither one is counted.
 - **Memory**: the highest value seen during the window, computed the way `podman
   stats` does: `memory.current` minus `inactive_file` (page cache that can be
   reclaimed).
+- **pasta**: the process behind `edge`'s network runs on the host, outside every
+  container's cgroup, so `podman stats` never shows it. Its CPU and RSS come
+  from `/proc/<pid>`.
 - **Load**: `curl` over HTTPS from 127.0.0.1. "20 req/s" is one client at the
   Traefik rate limit (`average: 20`, `burst: 50`), which is the most a single
   client can push. The burst test removes the rate limit and sends 5,000
@@ -43,19 +48,41 @@ stood in for the IdP. Neither one is counted.
 
 | | Idle | 20 req/s (rate limit) | Burst: 50 parallel, no rate limit |
 |---|---|---|---|
-| Traefik | 0.0% · 18 MiB | 16.9% · 32 MiB | 171% · 61 MiB |
-| fail2ban | 0.0% · 15 MiB | 2.0% · 22 MiB | 16% · 21 MiB |
-| alerter | 0.2% · 64 MiB | 0.6% · 68 MiB | 1.9% · 68 MiB |
-| fail2ban-unban | 0.0% · 7 MiB | 0.0% · 6.7 MiB | 0.0% · 6.7 MiB |
-| oauth2-proxy (optional) | 0.0% · 4.2 MiB | not under load | not under load |
-| **Total** | **0.3% · 108 MiB** | **19.5% · 133 MiB** | **189% · 161 MiB** |
+| Traefik | 0.0% · 19 MiB | 17.0% · 32 MiB | 183% · 62 MiB |
+| pasta (edge's network, on the host) | 0.0% · 29 MiB | 2.0% · 29 MiB | 20% · 29 MiB |
+| fail2ban | 0.0% · 15 MiB | 2.0% · 19 MiB | 18% · 21 MiB |
+| alerter | 0.2% · 66 MiB | 0.6% · 68 MiB | 1.7% · 68 MiB |
+| fail2ban-unban | 0.0% · 6.7 MiB | 0.0% · 6.5 MiB | 0.0% · 6.7 MiB |
+| edge (sleep loop) | 0.0% · 0.4 MiB | 0.0% · 0.4 MiB | 0.0% · 0.4 MiB |
+| oauth2-proxy (optional) | 0.0% · 22 MiB | not under load | not under load |
+| **Total** | **0.3% · 158 MiB** | **21.7% · 177 MiB** | **222% · 210 MiB** |
 
-CPU is a percentage of one core. With the old fail2ban filter, fail2ban alone took
-23% at 20 req/s and a full core in the burst, which put the totals at 40% and
-269% (see [below](#fail2ban-filter)).
+CPU is a percentage of one core.
 
-- **Burst throughput**: 5,000 requests took 10.5 s, about 478 req/s, with the
-  rate limit off.
+- **Burst throughput**: 5,000 requests took 10.5 s, about 477 req/s, with the
+  rate limit off. That's the same as with host networking.
+
+### What the edge namespace costs
+
+Before the `edge` namespace, Traefik ran on the host network and fail2ban
+couldn't actually block anyone (rootless podman has no access to the host
+firewall). Real bans cost this much, measured with the same benchmark:
+
+| | Host network (bans didn't block) | edge namespace (bans drop packets) |
+|---|---|---|
+| CPU at 20 req/s | 19.5% | 21.7% (+2.2, mostly pasta) |
+| CPU in the burst | 189% | 222% (+33: pasta 20, Traefik 12) |
+| Burst throughput | 478 req/s | 477 req/s |
+| Memory, idle | 108 MiB | 158 MiB (+29 MiB pasta, see note on oauth2-proxy) |
+
+pasta copies every connection between the host and the namespace, which is where
+the extra CPU goes. Throughput doesn't change. Its RSS is mostly the buffers it
+allocates at startup and stays flat under load. oauth2-proxy measured 4 MiB idle
+in the earlier run and 22 MiB in this one. It got no traffic in either run, so
+that's the Go runtime's startup variance, not the layout.
+
+With the old fail2ban filter, fail2ban alone took 23% at 20 req/s and a full core
+in the burst (see [below](#fail2ban-filter)).
 - **After the burst**: CPU drops straight back to idle. Traefik keeps about
   54 MiB for a while, because Go doesn't hand memory back straight away.
 - **oauth2-proxy** was only measured idle, because the load test didn't log in.

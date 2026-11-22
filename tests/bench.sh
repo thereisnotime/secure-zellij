@@ -9,6 +9,9 @@
 #
 # CPU comes from each container's cgroup (cpu.stat usage_usec over the window),
 # memory is the peak of memory.current minus inactive_file, like podman stats.
+# The edge container's pasta process (rootless networking, on the host) is
+# measured from /proc. Laid out like compose.yaml: Traefik and fail2ban share
+# edge's network namespace. Needs pasta.
 # Needs rootless podman with cgroups v2, curl, python3 and openssl.
 set -euo pipefail
 
@@ -17,7 +20,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 COMPOSE=${COMPOSE:-podman compose}
 # shellcheck source=tests/lib.sh
 . "$REPO/tests/lib.sh"
-NAMES=(sz-bench-traefik sz-bench-f2b sz-bench-unban sz-bench-alerter sz-bench-o2p sz-bench-idp sz-bench-backend sz-bench-regex)
+NAMES=(sz-bench-traefik sz-bench-f2b sz-bench-edge sz-bench-unban sz-bench-alerter sz-bench-o2p sz-bench-idp sz-bench-backend sz-bench-regex)
 VOLUMES=(sz-bench-run sz-bench-req)
 ALERTER_IMAGE=localhost/sz-bench-alerter:latest
 BACKEND_IMAGE=docker.io/library/python:3.15-slim
@@ -26,6 +29,8 @@ HTTPS=18443 BACKEND=18082 STATS=18083 IDP=18090 O2P=14180
 
 WORK=$(mktemp -d)
 cleanup() {
+    # containers in edge's network namespace first, podman won't remove edge before them
+    podman rm -f -v --ignore sz-bench-traefik sz-bench-f2b >/dev/null 2>&1 || true
     podman rm -f -v --ignore "${NAMES[@]}" >/dev/null 2>&1 || true
     podman volume rm -f "${VOLUMES[@]}" >/dev/null 2>&1 || true
     podman rmi -f "$ALERTER_IMAGE" >/dev/null 2>&1 || true
@@ -40,19 +45,28 @@ F2B_IMAGE=$(image fail2ban)
 
 # ── stack ─────────────────────────────────────────────────────────────────────
 
-# sample <label> <seconds>: CPU share of one core and peak memory per container
+# sample <label> <seconds>: CPU share of one core and peak memory per container,
+# plus edge's pasta process, which runs on the host outside any container cgroup
 sample() {
     local label=$1 secs=$2 n
     local -a paths=()
     for n in "${STACK[@]}"; do
         paths+=("$n=/sys/fs/cgroup$(podman inspect "$n" --format '{{.State.CgroupPath}}')")
     done
+    paths+=("pasta=pid:$PASTA_PID")
     python3 -I - "$label" "$secs" "${paths[@]}" <<'PY'
-import sys, time
+import os, sys, time
 label, secs, items = sys.argv[1], int(sys.argv[2]), [a.split("=", 1) for a in sys.argv[3:]]
-def cpu(p):
+TICK = os.sysconf("SC_CLK_TCK")
+def cpu(p):  # microseconds of CPU used so far
+    if p.startswith("pid:"):
+        f = open(f"/proc/{p[4:]}/stat").read().rsplit(")", 1)[1].split()
+        return (int(f[11]) + int(f[12])) * 1_000_000 // TICK
     return int(next(l.split()[1] for l in open(p + "/cpu.stat") if l.startswith("usage_usec")))
-def mem(p):
+def mem(p):  # MiB: RSS for a process, like podman stats for a container
+    if p.startswith("pid:"):
+        kb = next(l.split()[1] for l in open(f"/proc/{p[4:]}/status") if l.startswith("VmRSS"))
+        return int(kb) / 1024
     st = dict(l.split() for l in open(p + "/memory.stat"))
     return (int(open(p + "/memory.current").read()) - int(st["inactive_file"])) / 2**20
 c0 = {n: cpu(p) for n, p in items}
@@ -82,8 +96,8 @@ bench_stack() {
     touch "$WORK/logs/access.log"
     sed -i "s/127.0.0.1:8082/127.0.0.1:$BACKEND/; s/127.0.0.1:8083/127.0.0.1:$STATS/" "$WORK/traefik/dynamic/routers.yml"
     sed -i "s/127.0.0.1:8099/127.0.0.1:18099/; s|filePath: /var/log/traefik/access.log|filePath: /logs/access.log|" "$WORK/traefik/traefik.yml"
-    # dummy action: rootless podman can't change the host firewall anyway
-    sed 's/^action .*/action    = dummy/' "$REPO/fail2ban/jail.d/traefik-zellij.conf" >"$WORK/jail.d/traefik-zellij.conf"
+    # the shipped jail, nftables action included (only 200s here, so no bans)
+    cp "$REPO/fail2ban/jail.d/traefik-zellij.conf" "$WORK/jail.d/"
     for v in "${VOLUMES[@]}"; do
         podman volume create --opt type=tmpfs --opt device=tmpfs --opt o=size=1m,mode=0700 "$v" >/dev/null
     done
@@ -101,11 +115,19 @@ h.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 PY
     podman run -d --name sz-bench-backend --network host -v "$WORK/backend.py:/b.py:ro,Z" \
         "$BACKEND_IMAGE" python /b.py "$BACKEND" >/dev/null
-    podman run -d --name sz-bench-traefik --network host -e DOMAIN=zellij.test -e HTTP_PORT=18880 -e HTTPS_PORT=$HTTPS \
+    # laid out like compose.yaml: edge owns a pasta namespace and the ports,
+    # Traefik and fail2ban join it
+    podman run -d --name sz-bench-edge --network "pasta:-T,$BACKEND,-T,$STATS,-T,$O2P" \
+        -p 18880:18880 -p "$HTTPS:$HTTPS" --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+        --entrypoint sh "$(image edge)" -c "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait \$!; done" >/dev/null
+    PASTA_PID=$(pgrep -f "pasta .*-t $HTTPS-$HTTPS:" | head -1)
+    [ -n "$PASTA_PID" ] || { echo "can't find edge's pasta process" >&2; exit 1; }
+    podman run -d --name sz-bench-traefik --network container:sz-bench-edge -e DOMAIN=zellij.test -e HTTP_PORT=18880 -e HTTPS_PORT=$HTTPS \
         -v "$WORK/traefik/traefik.yml:/etc/traefik/traefik.yml:ro,Z" -v "$WORK/traefik/dynamic:/etc/traefik/dynamic:Z" \
         -v "$WORK/traefik/entrypoint.sh:/entrypoint.sh:ro,Z" -v "$WORK/traefik/sso:/etc/traefik/sso:ro,Z" \
         -v "$WORK/logs:/logs:z" --entrypoint /entrypoint.sh "$(image traefik)" >/dev/null
-    podman run -d --name sz-bench-f2b -v "$WORK/logs:/var/log/traefik:ro,z" \
+    podman run -d --name sz-bench-f2b --network container:sz-bench-edge --cap-add NET_ADMIN --cap-add NET_RAW \
+        -v "$WORK/logs:/var/log/traefik:ro,z" \
         -v "$REPO/fail2ban/filter.d:/data/filter.d:ro,z" -v "$WORK/jail.d:/data/jail.d:ro,z" \
         -v "$WORK/f2b-db:/data/db:z" -v sz-bench-run:/var/run/fail2ban:z "$F2B_IMAGE" >/dev/null 2>&1
     podman run -d --name sz-bench-unban --network none --read-only --cap-drop ALL \
@@ -128,7 +150,7 @@ PY
         -e OAUTH2_PROXY_COOKIE_SECRET="$(openssl rand -base64 32 | tr -- '+/' '-_')" \
         -e OAUTH2_PROXY_EMAIL_DOMAINS='*' -e OAUTH2_PROXY_UPSTREAMS=static://202 "$(image oauth2-proxy)" >/dev/null
 
-    STACK=(sz-bench-traefik sz-bench-f2b sz-bench-unban sz-bench-alerter sz-bench-o2p)
+    STACK=(sz-bench-edge sz-bench-traefik sz-bench-f2b sz-bench-unban sz-bench-alerter sz-bench-o2p)
     local -a C=(curl -ks -o /dev/null --resolve "zellij.test:$HTTPS:127.0.0.1")
     for _ in $(seq 30); do "${C[@]}" -f "https://zellij.test:$HTTPS/" && break; sleep 1; done
     sleep 20
@@ -162,6 +184,7 @@ PY
     for i in "$(image traefik)" "$F2B_IMAGE" "$(image oauth2-proxy)" "$ALERTER_IMAGE"; do
         podman image inspect "$i" --format '{{.Size}}' | python3 -I -c 'import sys; print(f"| {sys.argv[1]} | {int(sys.stdin.read()) / 1e6:.0f} MB |")' "$i"
     done
+    podman rm -f -v --ignore sz-bench-traefik sz-bench-f2b >/dev/null 2>&1
     podman rm -f -v --ignore "${NAMES[@]}" >/dev/null 2>&1
 }
 
