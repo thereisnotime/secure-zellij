@@ -4,15 +4,22 @@
 # compose_json [compose global args...]: the resolved compose model as JSON on
 # stdout, with every service's environment as a {KEY: value} object.
 # docker-compose can print JSON itself. podman-compose only prints YAML, so
-# that output goes through PyYAML. Resolved from a copy of compose.yaml in an
-# empty directory: podman-compose also reads the project's .env, and lets it
-# win over --env-file, which would leak the host's real settings into tests.
+# that output goes through PyYAML.
+#
+# Only the --env-file passed in counts. The host's real settings must not leak
+# in, so compose runs from a copy of compose.yaml in an empty directory
+# (podman-compose reads the project's .env too), with every variable the file
+# interpolates unset (`just` exports .env through dotenv-load, and compose
+# prefers the environment over --env-file).
 compose_json() {
     local out dir
+    local -a vars
     dir=$(mktemp -d)
     cp "$REPO/compose.yaml" "$dir/"
-    if ! out=$(cd "$dir" && $COMPOSE "$@" config --format json 2>/dev/null) || [ "${out:0:1}" != "{" ]; then
-        out=$(cd "$dir" && $COMPOSE "$@" config 2>/dev/null |
+    # shellcheck disable=SC2016  # a literal ${ to find in compose.yaml
+    mapfile -t vars < <(grep -o '\${[A-Za-z_][A-Za-z0-9_]*' "$REPO/compose.yaml" | cut -c3- | sort -u)
+    if ! out=$(cd "$dir" && unset "${vars[@]}" && $COMPOSE "$@" config --format json 2>/dev/null) || [ "${out:0:1}" != "{" ]; then
+        out=$(cd "$dir" && unset "${vars[@]}" && $COMPOSE "$@" config 2>/dev/null |
             python3 -I -c 'import json, sys, yaml; print(json.dumps(yaml.safe_load(sys.stdin)))') || {
             echo "compose_json: '$COMPOSE config' gave neither JSON nor YAML that PyYAML could read" >&2
             rm -rf "$dir"

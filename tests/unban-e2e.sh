@@ -37,7 +37,8 @@ expect() { # expect <name> <actual> <pattern>
 }
 
 # Same fail2ban image as the stack
-(cd "$REPO" && export DOMAIN=x && compose_json --env-file /dev/null) >"$WORK/cfg.json"
+echo DOMAIN=x >"$WORK/cfg.env"
+compose_json --env-file "$WORK/cfg.env" >"$WORK/cfg.json"
 F2B_IMAGE=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"]["fail2ban"]["image"])' "$WORK/cfg.json")
 
 mkdir -p "$WORK/log" "$WORK/db" "$WORK/jail.d" "$WORK/data"

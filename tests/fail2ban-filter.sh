@@ -13,7 +13,10 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 COMPOSE=${COMPOSE:-podman compose}
 # shellcheck source=tests/lib.sh
 . "$REPO/tests/lib.sh"
-IMAGE=$(cd "$REPO" && export DOMAIN=x && compose_json --env-file /dev/null |
+ENVF=$(mktemp)
+trap 'rm -f "$ENVF"' EXIT
+echo DOMAIN=x >"$ENVF"
+IMAGE=$(compose_json --env-file "$ENVF" |
     python3 -I -c 'import json,sys; print(json.load(sys.stdin)["services"]["fail2ban"]["image"])')
 
 got=$(podman run --rm --name sz-test-f2b-filter \

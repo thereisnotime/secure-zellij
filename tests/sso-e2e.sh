@@ -91,7 +91,7 @@ start_stack() {
         echo "SSO_ALLOWED_GROUPS=$2"
         printf '%b' "${3:-}"
     } >"$WORK/test.env"
-    (cd "$REPO" && compose_json --env-file "$WORK/test.env" --profile sso) >"$WORK/cfg.json"
+    compose_json --env-file "$WORK/test.env" --profile sso >"$WORK/cfg.json"
     local o2p_env traefik_env
     mapfile -t o2p_env < <(python3 -I - oauth2-proxy "$WORK/cfg.json" <<'PY'
 import json, sys

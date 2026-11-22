@@ -33,7 +33,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-(cd "$REPO" && export DOMAIN=zellij.test && compose_json --env-file /dev/null --profile sso) >"$WORK/cfg.json"
+echo DOMAIN=zellij.test >"$WORK/cfg.env"
+compose_json --env-file "$WORK/cfg.env" --profile sso >"$WORK/cfg.json"
 image() { python3 -I -c 'import json,sys; print(json.load(open(sys.argv[2]))["services"][sys.argv[1]]["image"])' "$1" "$WORK/cfg.json"; }
 F2B_IMAGE=$(image fail2ban)
 
