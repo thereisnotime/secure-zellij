@@ -48,10 +48,10 @@ flowchart LR
         direction LR
         subgraph stack["📦 podman compose"]
             direction TB
-            traefik["🚦 Traefik<br/>forwardAuth middleware"]
+            traefik["🚦 Traefik<br/>edge namespace<br/>forwardAuth middleware"]
             o2p["🔐 oauth2-proxy<br/>127.0.0.1:4180<br/><i>profile: sso</i>"]
         end
-        zellij["🪟 zellij web<br/>🔑 token login"]
+        zellij["🪟 zellij web<br/>127.0.0.1:8082<br/>🔑 token login"]
     end
 
     idp["🏛️ IdP<br/>Authelia · Keycloak · Authentik"]
@@ -116,21 +116,22 @@ sequenceDiagram
 What the stack does for you:
 
 - **Both routers protected.** The `sso` middleware is added to the zellij router and the `/stats` router.
-- **Redirects, not 401s.** Unauthenticated browsers get a `302` to the IdP, never a `401`. fail2ban, which bans on repeated `4xx`, doesn't punish people for simply not being logged in yet. A user outside the allowed groups gets a `403` at the callback, and those do count.
+- **Redirects, not 401s.** In oauth2-proxy mode unauthenticated requests, WebSocket upgrades included, get a `302` to the IdP, never a `401`. [fail2ban](fail2ban.md), which bans on repeated `4xx`, doesn't punish people for simply not being signed in yet. A user outside the allowed groups gets a `403` at the callback, and those do count. In forward-auth mode the IdP decides the response; browser requests normally get a redirect.
 - **Identity headers.** The signed-in user is passed to the backend as `X-Auth-Request-User`, `-Email`, `-Preferred-Username` and `-Groups` (oauth2-proxy mode), or as `Remote-*` (Authelia) and `X-authentik-*` (Authentik) headers. zellij ignores them today.
-- **Spoofed headers dropped.** Client-supplied `X-Forwarded-*` headers are stripped by the entrypoint, and look-alike headers such as `X_Auth_Request_User` are dropped too (`aliasHeadersStrategy: delete`).
-- **No cookies in the log.** The `Cookie` and `Authorization` headers are redacted in the access log, so session cookies never land on disk.
+- **Spoofed headers dropped.** Traefik's entry points trust no `X-Forwarded-*` headers from clients (no `forwardedHeaders.trustedIPs`), so Traefik replaces them before the forwardAuth check. forwardAuth deletes the identity headers it's configured to pass on from the client's request before copying in the IdP's answer, and look-alike headers such as `X_Auth_Request_User` are dropped too (`aliasHeadersStrategy: delete`).
+- **No cookies in the log.** The `Cookie`, `Authorization` and `Proxy-Authorization` headers are redacted in the access log, so session cookies and credentials never land on disk.
 
 ## Before you start
 
 1. **A real hostname and HTTPS.** The SSO cookie is `Secure`, and IdPs reject non-HTTPS redirect URIs. Use [Let's Encrypt](tls.md) or another trusted cert. A self-signed cert works for testing, but your browser has to trust it.
 2. **The exact callback URL.** In oauth2-proxy mode it is:
-   ```
+   ```text
    https://<DOMAIN>[:<HTTPS_PORT>]/oauth2/callback
    ```
    Include the port only when `HTTPS_PORT` is not `443`, e.g. `https://term.example.com:8443/oauth2/callback`. `just sso-check` prints the exact value.
 3. **The IdP must be reachable from this host.** oauth2-proxy talks to the IdP's issuer URL from the server, not only from the browser.
-4. **Let's Encrypt users.** The SSO routers in `traefik/sso/*.yml` use `tls: {}` just like `traefik/dynamic/routers.yml`. Swap them to `certResolver: letsencrypt` the same way.
+4. **Let's Encrypt users.** The SSO routers in `traefik/sso/*.yml` use `tls: {}` just like `traefik/dynamic/routers.yml`. Swap them to `certResolver: letsencrypt` the same way ([TLS](tls.md)).
+5. **Services on the host's loopback.** Traefik runs in the `edge` network namespace, so it reaches the host's `127.0.0.1` only on ports pasta forwards: zellij (8082), the alerter (8083) and oauth2-proxy (`SSO_PROXY_PORT`). An IdP on `127.0.0.1` needs its port added with `EDGE_PASTA_EXTRA`, see [Fail2ban: where the ban happens](fail2ban.md#where-the-ban-happens).
 
 ## oauth2-proxy mode
 
@@ -313,6 +314,8 @@ Notes:
 
 Traefik asks the IdP directly. There is no oauth2-proxy container and no `/oauth2/` route.
 
+`SSO_FORWARD_AUTH_URL` is called by Traefik from the `edge` network namespace. A public URL works as is. For an IdP listening on the host's `127.0.0.1`, forward its port into the namespace with `EDGE_PASTA_EXTRA` (e.g. `EDGE_PASTA_EXTRA=,-T,9091`), otherwise Traefik can't reach it.
+
 ### Authelia (forward-auth)
 
 Based on [Authelia's Traefik guide](https://www.authelia.com/integration/proxies/traefik/).
@@ -338,7 +341,7 @@ access_control:
       subject: ['group:zellij']
 ```
 
-**3. `.env`.** Use whatever URL reaches Authelia from Traefik: the public URL, or `127.0.0.1` if Authelia runs on this host. For `127.0.0.1`, also let Traefik's network namespace reach that port on the host (see [Fail2ban: where the ban happens](fail2ban.md#where-the-ban-happens)):
+**3. `.env`.** Use whatever URL reaches Authelia from Traefik: the public URL, or `127.0.0.1` if Authelia runs on this host. For `127.0.0.1`, also forward the port into Traefik's namespace with `EDGE_PASTA_EXTRA`:
 
 ```env
 SSO_MODE=forward-auth
@@ -368,6 +371,8 @@ SSO_CALLBACK_PREFIX=/outpost.goauthentik.io/
 SSO_CALLBACK_URL=http://authentik.example.com:9000
 ```
 
+If Authentik runs on this host and you point both URLs at `127.0.0.1:9000`, add `EDGE_PASTA_EXTRA=,-T,9000`.
+
 The callback router's rule is longer than the zellij router's, so Traefik gives it priority automatically, and it doesn't carry the `sso` middleware.
 
 ## Restricting who gets in
@@ -391,7 +396,7 @@ In forward-auth mode the restriction lives entirely in the IdP: Authelia `access
 
 ## Who connected
 
-Connection alerts, [fail2ban ban alerts](alerting.md#ban-alerts), webhook payloads and the stats dashboard show the signed-in SSO user next to the IP. See [Alerting: SSO user](alerting.md#sso-user) for which headers are read in each mode.
+Connection alerts, [fail2ban ban alerts](alerting.md#ban-alerts), webhook payloads and the stats dashboard show the signed-in SSO user next to the IP. Dashboard unbans record the SSO user who lifted the ban ([unban alerts](alerting.md#unban-alerts)). See [Alerting: SSO user](alerting.md#sso-user) for which headers are read in each mode.
 
 ## Checking the setup
 
@@ -401,6 +406,7 @@ just test-sso    # end-to-end test with a mock IdP in throwaway containers (does
 ```
 
 `just test-sso` runs `tests/sso-e2e.sh`. It also runs in CI and covers:
+
 - the login redirect, PKCE and the callback;
 - group denial;
 - forward-auth with a callback route;
@@ -412,16 +418,16 @@ just test-sso    # end-to-end test with a mock IdP in throwaway containers (does
 
 | Symptom | Cause / fix |
 |---|---|
-| Traefik exits with `entrypoint: SSO_MODE=forward-auth needs SSO_FORWARD_AUTH_URL` | Fill in the variable named in the message. |
+| Traefik exits with `entrypoint: SSO_MODE=forward-auth needs SSO_FORWARD_AUTH_URL` (or another `entrypoint:` message) | Fill in the variable named in the message. `unknown SSO_MODE` means a typo: use `off`, `oauth2-proxy` or `forward-auth`. |
 | `404` on `/oauth2/callback` | `SSO_MODE` isn't `oauth2-proxy`, or Traefik wasn't restarted after changing it (`just restart`). |
-| `502 Bad Gateway` on every page | oauth2-proxy isn't running. Check `just logs-sso`. Was the stack started without `--profile sso`? |
+| Every page fails with a `5xx` error | Traefik can't reach the auth service. oauth2-proxy mode: oauth2-proxy isn't running; check `just logs-sso` and whether the stack was started without `--profile sso` (`just up` adds it). forward-auth mode: `SSO_FORWARD_AUTH_URL` isn't reachable from the `edge` namespace; for an IdP on `127.0.0.1`, set `EDGE_PASTA_EXTRA`. |
 | IdP says *invalid redirect_uri* | The registered URI must match exactly, including the `:port`. See `just sso-check`. |
 | `email in id_token (...) isn't verified` | Keycloak users with Email verified off, or Authentik 2025.10+. Set `SSO_ALLOW_UNVERIFIED_EMAIL=true` or fix it in the IdP. |
 | `403 Forbidden` after logging in | User isn't in `SSO_ALLOWED_GROUPS`. Check the claim: Keycloak with Full group path on sends `/zellij`; Authelia needs `groups` in `SSO_OIDC_SCOPE`. |
 | `invalid_scope` from Keycloak | You requested a scope that isn't attached to the client, usually `groups`. |
 | `cookie_secret must be 16, 24, or 32 bytes` | Regenerate with `just sso-cookie-secret`. |
 | Login loop | Browser doesn't keep the `Secure` cookie: not real HTTPS, or the cert isn't trusted. Or you're on an `EXTRA_DOMAINS` host the IdP has no redirect URI for. |
-| Banned by fail2ban while testing | Repeated `403`s from failed group checks count as 4xx. `just fail2ban-unban <ip>`, see [fail2ban.md](fail2ban.md). |
+| Banned by fail2ban while testing | Repeated `403`s from failed group checks count as 4xx. Unban with `just fail2ban-unban <ip>` or from the dashboard, see [Fail2ban: unbanning](fail2ban.md#unbanning). |
 | Using an internal CA for the IdP | Mount the CA into the oauth2-proxy container, or set `SSO_SKIP_CA_VERIFY=true` for testing only. |
 
 ## Reference: all SSO variables
@@ -431,10 +437,10 @@ just test-sso    # end-to-end test with a mock IdP in throwaway containers (does
 | `SSO_MODE` | all | `off` | `off`, `oauth2-proxy` or `forward-auth` |
 | `SSO_PROVIDER` | oauth2-proxy | `oidc` | oauth2-proxy provider; `keycloak-oidc` also works for Keycloak |
 | `SSO_PROVIDER_NAME` | oauth2-proxy | `SSO` | display name |
-| `SSO_OIDC_ISSUER_URL` | oauth2-proxy | — | issuer URL (discovery at `/.well-known/openid-configuration`) |
-| `SSO_CLIENT_ID` | oauth2-proxy | — | OIDC client ID |
-| `SSO_CLIENT_SECRET` | oauth2-proxy | — | OIDC client secret |
-| `SSO_COOKIE_SECRET` | oauth2-proxy | — | 32-byte secret from `just sso-cookie-secret` |
+| `SSO_OIDC_ISSUER_URL` | oauth2-proxy | empty | issuer URL (discovery at `/.well-known/openid-configuration`) |
+| `SSO_CLIENT_ID` | oauth2-proxy | empty | OIDC client ID |
+| `SSO_CLIENT_SECRET` | oauth2-proxy | empty | OIDC client secret |
+| `SSO_COOKIE_SECRET` | oauth2-proxy | empty | 16, 24 or 32 bytes; `just sso-cookie-secret` makes one |
 | `SSO_OIDC_SCOPE` | oauth2-proxy | `openid email profile` | add `groups` for Authelia |
 | `SSO_GROUPS_CLAIM` | oauth2-proxy | `groups` | claim holding the groups |
 | `SSO_ALLOWED_GROUPS` | oauth2-proxy | empty (anyone) | comma-separated groups |
@@ -442,11 +448,12 @@ just test-sso    # end-to-end test with a mock IdP in throwaway containers (does
 | `SSO_ALLOW_UNVERIFIED_EMAIL` | oauth2-proxy | `false` | accept `email_verified: false` |
 | `SSO_COOKIE_EXPIRE` | oauth2-proxy | `12h` | SSO session length |
 | `SSO_REDIRECT_URL` | oauth2-proxy | per request | fixed callback URL; by default built from the host the browser used |
-| `SSO_EXTRA_REDIRECT_DOMAINS` | oauth2-proxy | — | extra hosts allowed as post-login redirect targets (`DOMAIN:*` is always allowed) |
+| `SSO_EXTRA_REDIRECT_DOMAINS` | oauth2-proxy | empty | extra hosts allowed as post-login redirect targets (`DOMAIN:*` is always allowed) |
 | `SSO_PROXY_PORT` | oauth2-proxy | `4180` | oauth2-proxy listens on `127.0.0.1:<port>` |
 | `SSO_SKIP_CA_VERIFY` | oauth2-proxy | `false` | skip TLS verification of the IdP (testing only) |
-| `SSO_FORWARD_AUTH_URL` | forward-auth | — | IdP forward-auth endpoint |
-| `SSO_CALLBACK_PREFIX` | any | — | extra path routed to the IdP on the zellij host (Authentik: `/outpost.goauthentik.io/`) |
-| `SSO_CALLBACK_URL` | any | — | where `SSO_CALLBACK_PREFIX` goes |
+| `SSO_FORWARD_AUTH_URL` | forward-auth | empty | IdP forward-auth endpoint, called by Traefik from the `edge` namespace |
+| `SSO_CALLBACK_PREFIX` | both | empty | extra path routed to the IdP on the zellij host (Authentik: `/outpost.goauthentik.io/`) |
+| `SSO_CALLBACK_URL` | both | empty | where `SSO_CALLBACK_PREFIX` goes |
+| `EDGE_PASTA_EXTRA` | both | empty | extra host-loopback ports Traefik may reach, e.g. `,-T,9091` for an IdP on `127.0.0.1:9091` |
 
 The Traefik side lives in `traefik/sso/*.yml`: `traefik/entrypoint.sh` copies in the right file for the mode and adds the `sso` middleware to the zellij and `/stats` routers. Other oauth2-proxy options can be added as `OAUTH2_PROXY_*` lines to the `oauth2-proxy` service in `compose.yaml` ([all options](https://oauth2-proxy.github.io/oauth2-proxy/configuration/overview)).
