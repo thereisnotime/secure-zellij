@@ -1,6 +1,6 @@
 # Fail2ban
 
-Fail2ban watches the Traefik access log and bans IPs that rack up repeated 4xx responses — failed token attempts, scanners, probes. The alerter notifies you; fail2ban acts.
+Fail2ban watches the Traefik access log and bans IPs that rack up repeated 4xx responses — failed token attempts, scanners, probes. The alerter notifies you; fail2ban acts. Every ban also sends an alert, see [Alerting: ban alerts](alerting.md#ban-alerts).
 
 It runs as a container in the compose stack. No host packages needed — it starts with the rest of the stack via `just up`.
 

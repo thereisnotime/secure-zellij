@@ -98,6 +98,8 @@ services:
     volumes:
       - traefik-logs:/var/log/traefik:ro
       - stats-data:/data
+      # fail2ban's ban database, read-only, for ban alerts
+      - fail2ban-data:/fail2ban:ro
     environment:
       - ACCESS_LOG=/var/log/traefik/access.log
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
@@ -113,6 +115,8 @@ services:
       - STATS_PASSWORD=${STATS_PASSWORD:-}
       # Tells the alerter which SSO identity headers in the access log to trust
       - SSO_MODE=${SSO_MODE:-off}
+      - BAN_ALERTS=${BAN_ALERTS:-true}
+      - F2B_DB=/fail2ban/fail2ban.sqlite3
     networks:
       - proxy
     depends_on:

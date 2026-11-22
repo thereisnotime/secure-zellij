@@ -38,6 +38,10 @@ DB_PATH = os.environ.get("STATS_DB", "/data/stats.db")
 STATS_PORT = int(os.environ.get("STATS_PORT", "8083"))
 STATS_USERNAME = os.environ.get("STATS_USERNAME", "")
 STATS_PASSWORD = os.environ.get("STATS_PASSWORD", "")
+# fail2ban's own database (read-only); every new ban there becomes an alert
+F2B_DB = os.environ.get("F2B_DB", "")
+BAN_ALERTS = os.environ.get("BAN_ALERTS", "true").strip().lower() in ("1", "true", "yes", "on")
+F2B_POLL_SECONDS = float(os.environ.get("F2B_POLL_SECONDS", "5"))
 # Which identity headers Traefik's forwardAuth sets, per SSO_MODE (docs/sso.md).
 # forwardAuth deletes every header in its authResponseHeaders list before copying
 # the IdP's answer in, so only these are trustworthy. With SSO off nothing is,
@@ -466,20 +470,42 @@ def _user_line(payload: dict, code: bool) -> str:
     return f"User: `{who}`\n" if code else f"User: {who}\n"
 
 
+def _message(payload: dict, code: bool) -> str:
+    """Alert text. code=True is Telegram Markdown, code=False is Discord."""
+
+    def q(val) -> str:
+        return f"`{_md_safe(str(val))}`" if code else str(val)
+
+    bold = "*" if code else "**"
+    fwd = f"Forwarded-For: {q(payload['x_forwarded_for'])}\n" if payload["x_forwarded_for"] else ""
+    ua = q(payload["user_agent"][:100])
+    if payload.get("event") == "fail2ban_ban":
+        return (
+            f"\U0001f6ab {bold}IP banned by fail2ban{bold}\n"
+            f"{_user_line(payload, code)}"
+            f"IP: {q(payload['client_ip'])}\n"
+            f"{fwd}"
+            f"Jail: {q(payload['jail'])} ({payload['failures']} failures, "
+            f"banned for {payload['bantime']}s)\n"
+            f"Last path: {q(payload['path'])} ({payload['status']})\n"
+            f"UA: {ua}\n"
+            f"Time: {q(payload['timestamp'])}"
+        )
+    return (
+        f"\U0001f50c {bold}Zellij connection{bold}\n"
+        f"{_user_line(payload, code)}"
+        f"IP: {q(payload['client_ip'])}\n"
+        f"{fwd}"
+        f"Path: {q(payload['path'])}\n"
+        f"UA: {ua}\n"
+        f"Time: {q(payload['timestamp'])}"
+    )
+
+
 def send_telegram(payload: dict) -> None:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
-    ip = payload["client_ip"]
-    fwd = f"\nForwarded-For: `{payload['x_forwarded_for']}`" if payload["x_forwarded_for"] else ""
-    ua = payload["user_agent"][:100]
-    text = (
-        f"🔌 *Zellij connection*\n"
-        f"{_user_line(payload, code=True)}"
-        f"IP: `{ip}`{fwd}\n"
-        f"Path: `{payload['path']}`\n"
-        f"UA: `{ua}`\n"
-        f"Time: `{payload['timestamp']}`"
-    )
+    text = _message(payload, code=True)
     try:
         resp = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
@@ -515,17 +541,7 @@ def send_webhooks(payload: dict) -> None:
 def send_discord(payload: dict) -> None:
     if not DISCORD_WEBHOOK_URL:
         return
-    ip = payload["client_ip"]
-    fwd = f"\nForwarded-For: {payload['x_forwarded_for']}" if payload["x_forwarded_for"] else ""
-    ua = payload["user_agent"][:100]
-    text = (
-        f"\U0001f50c **Zellij connection**\n"
-        f"{_user_line(payload, code=False)}"
-        f"IP: {ip}{fwd}\n"
-        f"Path: {payload['path']}\n"
-        f"UA: {ua}\n"
-        f"Time: {payload['timestamp']}"
-    )
+    text = _message(payload, code=False)
     try:
         resp = requests.post(DISCORD_WEBHOOK_URL, json={"content": text}, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
@@ -575,6 +591,10 @@ def _print_config() -> None:
     print(f"[alerter]   Webhooks  {webhook_status}  {webhook_label}", flush=True)
     print(f"[alerter]   Cooldown  {ALERT_COOLDOWN_SECONDS}s", flush=True)
     print(f"[alerter]   Stats     +  :{STATS_PORT} {auth_label}", flush=True)
+    if BAN_ALERTS and F2B_DB:
+        print(f"[alerter]   Bans      +  ({F2B_DB})", flush=True)
+    else:
+        print("[alerter]   Bans      -  disabled", flush=True)
     print(f"[alerter]   SSO user  {'+' if SSO_MODE != 'off' else '-'}  ({SSO_MODE})", flush=True)
 
 
@@ -629,9 +649,126 @@ def process_line(line: str) -> None:
         return
     _last_alert[key] = now
     print(f"[alerter] Connection: {who}{payload['client_ip']} -> {payload['path']}", flush=True)
+    dispatch(payload)
+
+
+# ── fail2ban bans ──────────────────────────────────────────────────────────────
+
+
+def _ban_log_entries(data: str | None) -> list[dict]:
+    """Access log entries fail2ban kept as evidence for a ban (oldest first).
+
+    fail2ban stores each matched line either as a string or as a list of the
+    pieces around the timestamp it found, so join before parsing.
+    """
+    try:
+        matches = json.loads(data or "{}").get("matches") or []
+    except ValueError, AttributeError:
+        return []
+    entries = []
+    for m in matches:
+        line = "".join(m) if isinstance(m, list) else str(m)
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries
+
+
+def _build_ban_payload(jail: str, ip: str, timeofban: int, bantime: int, data: str | None) -> dict:
+    entries = _ban_log_entries(data)
+    payload = _build_payload(entries[-1] if entries else {})
+    users: list[str] = []
+    emails: list[str] = []
+    for entry in entries:
+        user, email = _extract_sso(entry)
+        if user and user not in users:
+            users.append(user)
+        if email and email not in emails:
+            emails.append(email)
+    try:
+        failures = json.loads(data or "{}").get("failures", len(entries))
+    except ValueError, AttributeError:
+        failures = len(entries)
+    payload.update(
+        event="fail2ban_ban",
+        timestamp=datetime.fromtimestamp(timeofban, UTC).isoformat(),
+        client_ip=ip,
+        status=payload["status"] if entries else "",
+        service=payload["service"] if entries else "",
+        jail=jail,
+        bantime=bantime,
+        failures=failures,
+        sso_user=", ".join(users),
+        sso_email=", ".join(emails),
+    )
+    return payload
+
+
+def dispatch(payload: dict) -> None:
     send_telegram(payload)
     send_webhooks(payload)
     send_discord(payload)
+
+
+class BanWatcher:
+    """Polls fail2ban's sqlite DB and alerts on bans newer than the last one seen.
+
+    Bans already in the DB when the alerter starts are skipped, so a restart
+    doesn't replay the last day of bans. Tracking by time instead of rowid
+    survives fail2ban purging old rows.
+    """
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.cursor: int | None = None
+        self.seen: set[tuple[str, str]] = set()  # (jail, ip) banned at self.cursor
+
+    def _rows(self, since: int) -> list[tuple]:
+        conn = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=2)
+        try:
+            return conn.execute(
+                "SELECT jail, ip, timeofban, bantime, data FROM bans"
+                " WHERE timeofban >= ? ORDER BY timeofban",
+                (since,),
+            ).fetchall()
+        finally:
+            conn.close()
+
+    def poll(self) -> list[dict]:
+        if not os.path.exists(self.path):
+            return []
+        try:
+            if self.cursor is None:
+                rows = self._rows(0)
+                self.cursor = max((r[2] for r in rows), default=0)
+                self.seen = {(r[0], r[1]) for r in rows if r[2] == self.cursor}
+                return []
+            rows = self._rows(self.cursor)
+        except sqlite3.Error as exc:  # locked mid-write, or not created yet
+            print(f"[alerter] fail2ban DB not readable yet: {exc}", file=sys.stderr, flush=True)
+            return []
+        payloads = []
+        for jail, ip, timeofban, bantime, data in rows:
+            if timeofban == self.cursor and (jail, ip) in self.seen:
+                continue
+            if timeofban > self.cursor:
+                self.cursor, self.seen = timeofban, set()
+            self.seen.add((jail, ip))
+            payloads.append(_build_ban_payload(jail, ip or "unknown", timeofban, bantime, data))
+        return payloads
+
+
+def _watch_bans(path: str) -> None:
+    watcher = BanWatcher(path)
+    while True:
+        for payload in watcher.poll():
+            who = f" ({payload['sso_user']})" if payload["sso_user"] else ""
+            print(f"[alerter] Ban: {payload['client_ip']}{who} in {payload['jail']}", flush=True)
+            dispatch(payload)
+        time.sleep(F2B_POLL_SECONDS)
 
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
@@ -675,6 +812,8 @@ def tail(path: str) -> None:
     init_db()
     t = threading.Thread(target=_run_stats_server, daemon=True)
     t.start()
+    if BAN_ALERTS and F2B_DB:
+        threading.Thread(target=_watch_bans, args=(F2B_DB,), daemon=True).start()
 
     print(f"[alerter] Waiting for {path} ...", flush=True)
     while not os.path.exists(path):

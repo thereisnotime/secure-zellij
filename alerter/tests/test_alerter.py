@@ -398,3 +398,138 @@ def test_stats_store_sso_user_and_migrate_old_db(tmp_path, monkeypatch):
     users = [c["sso_user"] for c in stats["recent_connections"]]
     assert users == ["alice", ""]
     assert stats["summary"]["sso_users_1h"] == 1
+
+
+# ── fail2ban ban alerts ───────────────────────────────────────────────────────
+
+
+def _ban_line(user="", email=""):
+    entry = {
+        "ClientAddr": "203.0.113.9:5555",
+        "DownstreamStatus": 401,
+        "RequestPath": "/command/login",
+        "request_User-Agent": "curl/8",
+        "time": "2026-11-22T19:35:42Z",
+    }
+    if user:
+        entry["request_X-Auth-Request-Preferred-Username"] = user
+    if email:
+        entry["request_X-Auth-Request-Email"] = email
+    return json.dumps(entry, separators=(",", ":"))
+
+
+def _ban_data(*lines):
+    # fail2ban 1.1 keeps some matches whole and some split around the timestamp
+    matches = []
+    for i, line in enumerate(lines):
+        if i % 2 == 0:
+            head, _, tail = line.partition('"time":')
+            matches.append([head, '"time":' + tail[:-1], "}"])
+        else:
+            matches.append(line)
+    return json.dumps({"matches": matches, "failures": len(lines)})
+
+
+def _make_f2b_db(path):
+    import sqlite3
+
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE bans(jail TEXT NOT NULL, ip TEXT, timeofban INTEGER NOT NULL,"
+            " bantime INTEGER NOT NULL, bancount INTEGER NOT NULL default 1, data JSON)"
+        )
+
+
+def _add_ban(path, ip, ts, data="{}"):
+    import sqlite3
+
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO bans (jail, ip, timeofban, bantime, data) VALUES (?,?,?,?,?)",
+            ("traefik-zellij", ip, ts, 3600, data),
+        )
+
+
+def test_ban_log_entries_joins_split_matches():
+    entries = a._ban_log_entries(_ban_data(_ban_line("alice"), _ban_line("alice")))
+    assert len(entries) == 2
+    assert entries[0]["RequestPath"] == "/command/login"
+
+
+def test_ban_log_entries_tolerates_garbage():
+    assert a._ban_log_entries(None) == []
+    assert a._ban_log_entries("not json") == []
+    assert a._ban_log_entries(json.dumps({"matches": ["nope", ["{", "x"]]})) == []
+
+
+def test_ban_payload_carries_sso_users(monkeypatch):
+    monkeypatch.setattr(a, "SSO_MODE", "oauth2-proxy")
+    data = _ban_data(_ban_line("alice", "alice@example.com"), _ban_line("bob"), _ban_line("alice"))
+    p = a._build_ban_payload("traefik-zellij", "203.0.113.9", 1795376142, 3600, data)
+    assert p["event"] == "fail2ban_ban"
+    assert p["client_ip"] == "203.0.113.9"
+    assert p["sso_user"] == "alice, bob"
+    assert p["sso_email"] == "alice@example.com"
+    assert p["failures"] == 3
+    assert p["path"] == "/command/login"
+    assert p["status"] == 401
+    assert p["timestamp"].startswith("2026-11-22T")
+
+
+def test_ban_payload_without_sso(monkeypatch):
+    monkeypatch.setattr(a, "SSO_MODE", "off")
+    p = a._build_ban_payload("j", "1.2.3.4", 0, 60, _ban_data(_ban_line("mallory")))
+    assert p["sso_user"] == ""
+
+
+def test_ban_message_texts(monkeypatch):
+    monkeypatch.setattr(a, "SSO_MODE", "oauth2-proxy")
+    p = a._build_ban_payload(
+        "traefik-zellij", "203.0.113.9", 0, 3600, _ban_data(_ban_line("alice", "alice@example.com"))
+    )
+    tg = a._message(p, code=True)
+    dc = a._message(p, code=False)
+    assert tg.startswith("\U0001f6ab *IP banned by fail2ban*")
+    assert "User: `alice <alice@example.com>`" in tg
+    assert "IP: `203.0.113.9`" in tg
+    assert "Jail: traefik-zellij (1 failures, banned for 3600s)" in dc
+    assert "User: alice <alice@example.com>" in dc
+
+
+def test_ban_watcher_skips_old_bans_then_alerts_new(tmp_path, monkeypatch):
+    monkeypatch.setattr(a, "SSO_MODE", "oauth2-proxy")
+    db = str(tmp_path / "fail2ban.sqlite3")
+    w = a.BanWatcher(db)
+    assert w.poll() == []  # no DB yet
+    _make_f2b_db(db)
+    _add_ban(db, "198.51.100.1", 100)
+    assert w.poll() == []  # existing bans are history
+    _add_ban(db, "198.51.100.2", 100, _ban_data(_ban_line("alice")))  # same second
+    _add_ban(db, "198.51.100.3", 105, _ban_data(_ban_line("bob")))
+    got = w.poll()
+    assert [(p["client_ip"], p["sso_user"]) for p in got] == [
+        ("198.51.100.2", "alice"),
+        ("198.51.100.3", "bob"),
+    ]
+    assert w.poll() == []
+
+
+def test_ban_watcher_survives_purge(tmp_path):
+    import sqlite3
+
+    db = str(tmp_path / "fail2ban.sqlite3")
+    _make_f2b_db(db)
+    _add_ban(db, "198.51.100.1", 100)
+    w = a.BanWatcher(db)
+    w.poll()
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM bans")
+    _add_ban(db, "198.51.100.4", 200)
+    assert [p["client_ip"] for p in w.poll()] == ["198.51.100.4"]
+
+
+def test_ban_watcher_unreadable_db(tmp_path, capsys):
+    db = tmp_path / "fail2ban.sqlite3"
+    db.write_text("not a database")
+    assert a.BanWatcher(str(db)).poll() == []
+    assert "fail2ban DB not readable" in capsys.readouterr().err

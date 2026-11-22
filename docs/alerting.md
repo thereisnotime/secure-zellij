@@ -127,12 +127,59 @@ Available placeholders:
 | `{service}` | `zellij` |
 | `{sso_user}` | `alice` (empty without SSO) |
 | `{sso_email}` | `alice@example.com` (empty without SSO) |
+| `{jail}`, `{bantime}`, `{failures}` | ban alerts only, see [Ban alerts](#ban-alerts) |
 
 If the template is invalid JSON after substitution, or references an unknown placeholder, the alerter logs a warning and falls back to the default payload.
 
+## Ban alerts
+
+Every time fail2ban bans an IP, the same channels get an alert. The alerter mounts fail2ban's database (`fail2ban-data` volume) read-only and checks it every 5 seconds, so fail2ban itself needs no extra action. Bans already in the database when the alerter starts aren't announced again.
+
+```
+🚫 IP banned by fail2ban
+User: `alice <alice@example.com>`
+IP: `203.0.113.9`
+Jail: `traefik-zellij` (10 failures, banned for 3600s)
+Last path: `/command/login` (401)
+UA: `Mozilla/5.0 ...`
+Time: `2026-11-22T19:37:40+00:00`
+```
+
+The `User` line comes from the log lines fail2ban kept as evidence for the ban (up to 10), so it names every SSO account that produced the failures, comma-separated. It only shows up when someone signed in through SSO and then failed, typically by trying bad zellij tokens. People who aren't signed in get a redirect to the IdP, not a 4xx, so they never count towards a ban. Users refused by `SSO_ALLOWED_GROUPS` get a 403 before any identity is set, so those bans have no user.
+
+Webhooks get the usual fields plus `jail`, `bantime` and `failures`:
+
+```json
+{
+  "event": "fail2ban_ban",
+  "timestamp": "2026-11-22T19:37:40+00:00",
+  "client_ip": "203.0.113.9",
+  "x_forwarded_for": "",
+  "user_agent": "Mozilla/5.0 ...",
+  "path": "/command/login",
+  "status": 401,
+  "service": "zellij",
+  "sso_user": "alice",
+  "sso_email": "alice@example.com",
+  "jail": "traefik-zellij",
+  "bantime": 3600,
+  "failures": 10
+}
+```
+
+A `WEBHOOK_BODY_TEMPLATE` is used for both events. Stick to the shared fields, or reference `{jail}`, `{bantime}` or `{failures}` knowing that connection alerts will then fall back to the default payload. Branch on `event` in the receiver if the two need different handling.
+
+To turn ban alerts off:
+
+```env
+BAN_ALERTS=false
+```
+
+The alerter log prints `[alerter] Ban: 203.0.113.9 (alice) in traefik-zellij` for each one.
+
 ## SSO user
 
-When [SSO](sso.md) is on, Traefik's forwardAuth middleware adds the signed-in identity to every request and the access log records it. The alerter reads it from there and puts it in alerts, webhook payloads and the stats dashboard (a **User** column under Recent Connections and an **SSO Users (1h)** card).
+When [SSO](sso.md) is on, Traefik's forwardAuth middleware adds the signed-in identity to every request and the access log records it. The alerter reads it from there and puts it in connection and [ban](#ban-alerts) alerts, webhook payloads and the stats dashboard (a **User** column under Recent Connections and an **SSO Users (1h)** card).
 
 | `SSO_MODE` | User taken from (first one set) | Email from |
 |---|---|---|

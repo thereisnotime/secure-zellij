@@ -23,6 +23,7 @@ A podman compose stack that puts [Traefik](https://traefik.io) in front of the [
 - **TLS out of the box** — self-signed by default, one config change to switch to Let's Encrypt
 - **Real IP forwarding** — `X-Real-IP` / `X-Forwarded-For` correctly extracted and passed through
 - **Connection alerts** — fires on WebSocket connections, not page loads, so only actual terminal sessions trigger notifications
+- **Ban alerts** — a notification whenever fail2ban bans an IP, with the SSO user it was signed in as
 - **Telegram, Discord + generic webhooks** — structured JSON payload with IP, user agent, path, and timestamp
 - **Security headers** — HSTS, CSP, XSS protection, clickjacking protection
 - **Optional SSO** — Authelia, Keycloak, Authentik (or any OIDC IdP) in front of zellij via oauth2-proxy or native forward-auth
@@ -165,6 +166,7 @@ Copy `.env.example` to `.env` and edit:
 | `TELEGRAM_BOT_TOKEN` | | — | Bot token from [@BotFather](https://t.me/BotFather) |
 | `TELEGRAM_CHAT_ID` | | — | Chat or channel ID for alerts |
 | `WEBHOOK_URLS` | | — | Comma-separated webhook URLs |
+| `BAN_ALERTS` | | `true` | Also alert when fail2ban bans an IP (see [Alerting](docs/alerting.md#ban-alerts)) |
 | `WEBHOOK_BODY_TEMPLATE` | | — | JSON template for webhook body (see [Alerting](docs/alerting.md)) |
 | `SSO_MODE` | | `off` | `oauth2-proxy` or `forward-auth` to put an IdP login in front (see [SSO](docs/sso.md)) |
 
@@ -199,7 +201,7 @@ No changes needed. Traefik auto-generates a self-signed cert. The browser will s
 
 ## Alerting
 
-Alerts fire on every WebSocket connection, i.e. when a terminal session is established. Traefik logs hijacked WebSocket connections with `DownstreamStatus: 0`, which is what `ALERT_ON_STATUS` matches by default. With [SSO](docs/sso.md) on, alerts and the stats dashboard also show who signed in.
+Alerts fire on every WebSocket connection, i.e. when a terminal session is established. Traefik logs hijacked WebSocket connections with `DownstreamStatus: 0`, which is what `ALERT_ON_STATUS` matches by default. fail2ban bans get their own alert. With [SSO](docs/sso.md) on, alerts and the stats dashboard also show who signed in.
 
 ### Telegram
 

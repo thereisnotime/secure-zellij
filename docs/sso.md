@@ -390,7 +390,7 @@ In forward-auth mode the restriction lives entirely in the IdP: Authelia `access
 
 ## Who connected
 
-Alerts, webhook payloads and the stats dashboard show the signed-in SSO user next to the IP. See [Alerting: SSO user](alerting.md#sso-user) for which headers are read in each mode.
+Connection alerts, [fail2ban ban alerts](alerting.md#ban-alerts), webhook payloads and the stats dashboard show the signed-in SSO user next to the IP. See [Alerting: SSO user](alerting.md#sso-user) for which headers are read in each mode.
 
 ## Checking the setup
 
