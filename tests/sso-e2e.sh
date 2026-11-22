@@ -123,7 +123,7 @@ PY
 anon() { "${C[@]}" -o /dev/null -w '%{http_code} %{redirect_url}' "$URL/my-session"; }
 anon_ws() {
     "${C[@]}" -o /dev/null -w '%{http_code}' -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
-        -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$URL/ws/terminal"
+        -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$URL/ws/terminal" # gitleaks:allow (RFC 6455 sample nonce)
 }
 login() { "${C[@]}" -L -c "$WORK/jar" -b "$WORK/jar" -o "$WORK/body" -w '%{http_code} %{url_effective}' "$URL/my-session"; }
 again() { "${C[@]}" -b "$WORK/jar" -H 'X_Auth_Request_User: mallory' "$URL/other"; }
