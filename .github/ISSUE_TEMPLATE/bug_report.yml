@@ -1,0 +1,46 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems: please report them privately instead, see SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      placeholder: |
+        1. set SSO_MODE=...
+        2. just up
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and health
+      description: Relevant output of `just status`, `just logs`, `podman ps`, and `just selinux-check` on SELinux hosts. Remove tokens, secrets and IPs you don't want public.
+      render: text
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Output of `git log -1 --format=%h`
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS and version, podman version, compose provider (docker-compose or podman-compose), SELinux mode, SSO_MODE
+      placeholder: Fedora 43, podman 5.8.2, podman-compose 1.5.0, enforcing, off
+    validations:
+      required: true

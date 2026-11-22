@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/thereisnotime/secure-zellij/security/advisories/new
+    about: Please report vulnerabilities privately, not as an issue.
+  - name: zellij itself
+    url: https://github.com/zellij-org/zellij/issues
+    about: Problems in zellij's web server or client belong upstream.

@@ -1,15 +1,32 @@
 # Documentation
 
-| Document | Description |
+New here? Start with the [README](../README.md) and its quick start, then
+[Configuration](configuration.md).
+
+## Setting up
+
+| Guide | |
 |---|---|
-| [TLS Configuration](tls.md) | Self-signed, Let's Encrypt, DNS-01, BYO cert, hardening |
-| [Alerting](alerting.md) | Telegram, webhooks, n8n, trigger conditions |
-| [Multi-domain & LAN Access](multi-domain.md) | EXTRA_DOMAINS, LAN IP, local DNS, tunnels |
-| [Systemd Service](systemd.md) | Auto-start on login or boot |
-| [Integrations](integrations.md) | n8n, Slack, ntfy.sh, Home Assistant webhook examples |
-| [Log Rotation](log-rotation.md) | Rotating the Traefik access log with logrotate |
-| [SSO](sso.md) | Authelia, Keycloak, Authentik login in front of zellij |
-| [Fail2ban](fail2ban.md) | Auto-ban IPs with repeated 4xx responses |
-| [SELinux](selinux.md) | Labels on mounts, checking, enforcing-mode hosts |
-| [Performance](performance.md) | CPU, memory and disk use; fail2ban filter benchmark |
-| [IP Allowlist](ip-allowlist.md) | Restrict access to specific IPs/CIDRs via Traefik |
+| [Configuration](configuration.md) | Every variable, ports, files you might edit |
+| [TLS](tls.md) | Self-signed, Let's Encrypt, DNS-01, your own certificate |
+| [SSO](sso.md) | Authelia, Keycloak, Authentik, any OIDC provider |
+| [Multi-domain & LAN](multi-domain.md) | Extra hostnames, LAN IPs, tunnels |
+| [IP allowlist](ip-allowlist.md) | Restrict access to known networks |
+| [Systemd](systemd.md) | Start on login or boot |
+
+## Protection and visibility
+
+| Guide | |
+|---|---|
+| [Fail2ban](fail2ban.md) | What gets banned, how bans are enforced, tuning, unbanning |
+| [Alerting](alerting.md) | Channels, payloads, templates, ban and unban alerts |
+| [Integrations](integrations.md) | n8n, Slack, ntfy, Home Assistant |
+
+## Running it
+
+| Guide | |
+|---|---|
+| [Runbook](../RUNBOOK.md) | Day-to-day operations and troubleshooting |
+| [SELinux](selinux.md) | Enforcing-mode hosts, labels, debugging denials |
+| [Log rotation](log-rotation.md) | Keep the access log in check |
+| [Performance](performance.md) | Measured CPU, memory, disk, fail2ban filter benchmark |
