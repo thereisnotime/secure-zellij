@@ -256,6 +256,7 @@ Payload sent to each URL via `POST`:
 just up             # start the stack
 just down           # stop the stack
 just restart        # restart all services
+just upgrade        # update: git pull + rebuild + recreate
 just build          # rebuild images (no cache)
 just pull           # pull latest upstream images
 just clean          # destroy containers and volumes
@@ -317,7 +318,9 @@ just test-sso       # SSO end-to-end test with a mock IdP
 │   └── unban-helper.py         # carries out dashboard unbans (fail2ban-unban)
 ├── tests/
 │   ├── sso-e2e.sh              # SSO end-to-end test (mock IdP)
-│   └── unban-e2e.sh            # unban button end-to-end test (real fail2ban)
+│   ├── unban-e2e.sh            # unban button end-to-end test (real fail2ban)
+│   ├── fail2ban-filter.sh      # fail2ban filter check against sample lines
+│   └── bench.sh                # benchmarks from docs/performance.md (just bench)
 ├── alerter/
 │   ├── alerter.py              # log tailer + alert dispatcher
 │   ├── pyproject.toml          # dependencies + ruff config

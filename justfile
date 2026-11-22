@@ -43,6 +43,12 @@ restart:
 build:
     {{ compose }} build --no-cache
 
+# Upgrade a running install: pull the repo, then pull new images, rebuild the alerter
+# and recreate what changed (plain `just up` does not rebuild the alerter)
+upgrade:
+    git pull --ff-only
+    {{ compose }} up -d --build
+
 # Pull latest upstream images
 pull:
     {{ compose }} pull
@@ -194,6 +200,10 @@ test-filter:
 # End-to-end test of the dashboard unban button (real fail2ban, throwaway containers)
 test-unban:
     tests/unban-e2e.sh
+
+# Benchmarks from docs/performance.md in throwaway containers: all, stack or filter
+bench what="all":
+    tests/bench.sh {{ what }}
 
 # Generate a cookie secret for SSO_COOKIE_SECRET (oauth2-proxy)
 sso-cookie-secret:

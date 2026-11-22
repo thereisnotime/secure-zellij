@@ -12,6 +12,7 @@ just down                        # stop all containers
 just start                       # start containers + zellij web server
 just stop                        # stop containers + zellij web server
 just restart                     # restart all containers
+just upgrade                     # git pull, pull images, rebuild the alerter, recreate
 just status                      # full status: zellij, sessions, tokens, containers
 just build                       # rebuild alerter image (no cache)
 just clean                       # destroy containers AND volumes (destructive)

@@ -4,8 +4,13 @@ How much CPU, memory and disk the stack uses, and the benchmark behind the
 fail2ban filter. The numbers come from one machine, measured on 2026-11-22. Expect
 the same order of magnitude elsewhere, not the exact figures.
 
+Rerun them yourself with `just bench` (or `just bench stack` / `just bench filter`).
+It uses throwaway `sz-bench-*` containers on spare ports, leaves the real stack alone,
+and prints the tables below as Markdown.
+
 **Short version:** about **110 MiB of RAM and ~0% CPU when idle**. One client
-at the rate limit (20 req/s) costs about **20% of one core**, mostly Traefik.
+at the rate limit (20 req/s) costs about **20% of one core**, nearly all of it
+Traefik.
 Images take about **560 MB** of disk.
 
 ## Test setup
@@ -38,18 +43,18 @@ stood in for the IdP. Neither one is counted.
 
 | | Idle | 20 req/s (rate limit) | Burst: 50 parallel, no rate limit |
 |---|---|---|---|
-| Traefik | 0.0% · 17 MiB | 16.5% · 32 MiB | 167% · 61 MiB |
-| fail2ban (old filter) | 0.0% · 15 MiB | 23.2% · 22 MiB | 100% · 23 MiB |
-| alerter | 0.2% · 66 MiB | 0.6% · 68 MiB | 1.9% · 68 MiB |
-| fail2ban-unban | 0.0% · 6.5 MiB | 0.0% · 6.7 MiB | 0.0% · 6.5 MiB |
-| oauth2-proxy (optional) | 0.0% · 4.3 MiB | not under load | not under load |
-| **Total** | **0.3% · 109 MiB** | **40% · 133 MiB** | **269% · 162 MiB** |
+| Traefik | 0.0% · 18 MiB | 16.9% · 32 MiB | 171% · 61 MiB |
+| fail2ban | 0.0% · 15 MiB | 2.0% · 22 MiB | 16% · 21 MiB |
+| alerter | 0.2% · 64 MiB | 0.6% · 68 MiB | 1.9% · 68 MiB |
+| fail2ban-unban | 0.0% · 7 MiB | 0.0% · 6.7 MiB | 0.0% · 6.7 MiB |
+| oauth2-proxy (optional) | 0.0% · 4.2 MiB | not under load | not under load |
+| **Total** | **0.3% · 108 MiB** | **19.5% · 133 MiB** | **189% · 161 MiB** |
 
-CPU is a percentage of one core. This run used the **old** fail2ban filter. The
-current filter brings fail2ban down to about 2% of a core at 20 req/s (see
-[below](#fail2ban-filter)), so the 20 req/s total is now about 20%.
+CPU is a percentage of one core. With the old fail2ban filter, fail2ban alone took
+23% at 20 req/s and a full core in the burst, which put the totals at 40% and
+269% (see [below](#fail2ban-filter)).
 
-- **Burst throughput**: 5,000 requests took 10.5 s, about 475 req/s, with the
+- **Burst throughput**: 5,000 requests took 10.5 s, about 478 req/s, with the
   rate limit off.
 - **After the burst**: CPU drops straight back to idle. Traefik keeps about
   54 MiB for a while, because Go doesn't hand memory back straight away.
