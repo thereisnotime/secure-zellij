@@ -1,0 +1,41 @@
+# SSO via oauth2-proxy (SSO_MODE=oauth2-proxy).
+# entrypoint.sh copies this into the live dynamic config and fills in the
+# placeholders. Works with any OIDC IdP: Authelia, Keycloak, Authentik, ...
+http:
+  middlewares:
+    sso:
+      forwardAuth:
+        # Unauthenticated browsers get a 302 to the IdP, authenticated ones a 202.
+        # trustForwardHeader is safe: the entrypoints set no forwardedHeaders.trustedIPs,
+        # so Traefik drops client-supplied X-Forwarded-* before this middleware runs.
+        address: "http://127.0.0.1:SSO_PROXY_PORT/"
+        trustForwardHeader: true
+        maxResponseBodySize: 65536
+        authResponseHeaders:
+          - X-Auth-Request-User
+          - X-Auth-Request-Email
+          - X-Auth-Request-Preferred-Username
+          - X-Auth-Request-Groups
+
+  routers:
+    # Login start, callback and sign-out live under /oauth2/ on the zellij host.
+    sso-oauth2:
+      rule: "(ZELLIJ_RULE) && PathPrefix(`/oauth2/`)"
+      entryPoints:
+        - websecure
+      service: sso-oauth2
+      middlewares:
+        - security-headers
+        - real-ip
+        - rate-limit
+      tls: {}
+      # For Let's Encrypt, replace `tls: {}` with:
+      # tls:
+      #   certResolver: letsencrypt
+
+  services:
+    sso-oauth2:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:SSO_PROXY_PORT"
+        passHostHeader: true

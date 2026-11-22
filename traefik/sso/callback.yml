@@ -1,0 +1,24 @@
+# Extra route for IdPs that need a path on the app domain (SSO_CALLBACK_PREFIX),
+# e.g. Authentik's /outpost.goauthentik.io/ for single-application forward auth.
+http:
+  routers:
+    sso-callback:
+      rule: "(ZELLIJ_RULE) && PathPrefix(`SSO_CALLBACK_PREFIX`)"
+      entryPoints:
+        - websecure
+      service: sso-callback
+      middlewares:
+        - security-headers
+        - real-ip
+        - rate-limit
+      tls: {}
+      # For Let's Encrypt, replace `tls: {}` with:
+      # tls:
+      #   certResolver: letsencrypt
+
+  services:
+    sso-callback:
+      loadBalancer:
+        servers:
+          - url: "SSO_CALLBACK_URL"
+        passHostHeader: true

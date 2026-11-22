@@ -96,6 +96,18 @@ podman compose restart fail2ban
 
 ---
 
+## SSO
+
+Setup per IdP (Authelia, Keycloak, Authentik): [docs/sso.md](docs/sso.md).
+
+```bash
+just sso-check                 # settings, cookie secret, IdP discovery, redirect URI to register
+just logs-sso                  # oauth2-proxy logs (SSO_MODE=oauth2-proxy)
+just test-sso                  # e2e test against a mock IdP, throwaway containers
+```
+
+Turn SSO off: set `SSO_MODE=off` in `.env`, then `just down && just up`.
+
 ## Certificates
 
 Check current TLS cert expiry (self-signed):

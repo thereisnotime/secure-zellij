@@ -5,6 +5,11 @@ set dotenv-load := true
 # zellij on PATH (the web UI only sees sessions of its own version as running).
 zellij := if env("ZELLIJ_BIN", "") == "" { "zellij" } else { env("ZELLIJ_BIN") }
 
+# The oauth2-proxy container only runs in SSO_MODE=oauth2-proxy (docs/sso.md)
+# down/clean always include the profile so switching SSO_MODE off doesn't leave it running
+compose_all := "podman compose --profile sso"
+compose := if env("SSO_MODE", "off") == "oauth2-proxy" { "podman compose --profile sso" } else { "podman compose" }
+
 # List all available recipes
 default:
     @just --list --unsorted
@@ -13,52 +18,56 @@ default:
 
 # Start the full stack: Traefik proxy + Zellij web backend
 start:
-    podman compose up -d
+    {{ compose }} up -d
     {{ zellij }} web --start -d 2>/dev/null || true
     @just status
 
 # Start the stack in the background
 up:
-    podman compose up -d
+    {{ compose }} up -d
 
 # Stop the full stack: Traefik proxy + Zellij web backend
 stop:
-    podman compose down
+    {{ compose_all }} down
     {{ zellij }} web --stop 2>/dev/null || true
 
 # Stop the stack
 down:
-    podman compose down
+    {{ compose_all }} down
 
 # Restart all services
 restart:
-    podman compose restart
+    {{ compose }} restart
 
 # Rebuild all images (no cache)
 build:
-    podman compose build --no-cache
+    {{ compose }} build --no-cache
 
 # Pull latest upstream images
 pull:
-    podman compose pull
+    {{ compose }} pull
 
 # Destroy containers and volumes (destructive)
 clean:
-    podman compose down -v
+    {{ compose_all }} down -v
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 
 # Follow logs for all services
 logs:
-    podman compose logs -f
+    {{ compose }} logs -f
 
 # Follow Traefik logs only
 logs-traefik:
-    podman compose logs -f traefik
+    {{ compose }} logs -f traefik
 
 # Follow alerter logs only
 logs-alerter:
-    podman compose logs -f alerter
+    {{ compose }} logs -f alerter
+
+# Follow oauth2-proxy logs (SSO_MODE=oauth2-proxy)
+logs-sso:
+    {{ compose }} logs -f oauth2-proxy
 
 # Show last N access log entries (default: 20)
 access n="20":
@@ -111,7 +120,7 @@ status:
     @{{ zellij }} web --list-tokens 2>/dev/null | sed 's/^/  /' || echo "  none"
     @echo "│"
     @echo "└─ Containers ─────────────────────────────────────────────"
-    @podman compose ps 2>/dev/null
+    @{{ compose }} ps 2>/dev/null
 
 # Open the primary URL in the default browser
 open:
@@ -169,4 +178,42 @@ test:
 # Validate compose file
 validate:
     podman compose config --quiet
+    podman compose --profile sso config --quiet
     @echo "compose.yaml OK"
+
+# ── SSO ───────────────────────────────────────────────────────────────────────
+
+# End-to-end SSO test with a mock IdP in throwaway containers (doesn't touch the stack)
+test-sso:
+    tests/sso-e2e.sh
+
+# Generate a cookie secret for SSO_COOKIE_SECRET (oauth2-proxy)
+sso-cookie-secret:
+    @openssl rand -base64 32 | tr -- '+/' '-_'
+
+# Show the SSO mode and check the IdP's OIDC discovery document is reachable
+sso-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mode="${SSO_MODE:-off}"
+    echo "SSO_MODE=${mode}"
+    case "$mode" in
+      off) echo "SSO disabled, zellij token only." ;;
+      oauth2-proxy)
+        for v in SSO_OIDC_ISSUER_URL SSO_CLIENT_ID SSO_CLIENT_SECRET SSO_COOKIE_SECRET; do
+          [ -n "${!v:-}" ] || { echo "missing $v"; exit 1; }
+        done
+        len=$(printf '%s' "$SSO_COOKIE_SECRET" | wc -c)
+        case "$len" in 16|24|32|44) ;; *) echo "SSO_COOKIE_SECRET must be 16, 24 or 32 bytes (got $len chars), use: just sso-cookie-secret"; exit 1 ;; esac
+        url="${SSO_OIDC_ISSUER_URL%/}/.well-known/openid-configuration"
+        echo "discovery: $url"
+        curl -fsS "$url" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("issuer:", d["issuer"]); print("scopes:", " ".join(d.get("scopes_supported", [])))'
+        echo "IdP redirect URI to register: https://${DOMAIN}$( [ "${HTTPS_PORT:-443}" = 443 ] || echo ":${HTTPS_PORT}" )/oauth2/callback"
+        ;;
+      forward-auth)
+        [ -n "${SSO_FORWARD_AUTH_URL:-}" ] || { echo "missing SSO_FORWARD_AUTH_URL"; exit 1; }
+        echo "forward-auth: ${SSO_FORWARD_AUTH_URL}"
+        [ -z "${SSO_CALLBACK_PREFIX:-}" ] || echo "callback: ${SSO_CALLBACK_PREFIX} -> ${SSO_CALLBACK_URL:-MISSING}"
+        ;;
+      *) echo "unknown SSO_MODE '$mode'"; exit 1 ;;
+    esac

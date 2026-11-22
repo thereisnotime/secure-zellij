@@ -25,6 +25,7 @@ A podman compose stack that puts [Traefik](https://traefik.io) in front of the [
 - **Connection alerts** — fires on WebSocket connections, not page loads, so only actual terminal sessions trigger notifications
 - **Telegram, Discord + generic webhooks** — structured JSON payload with IP, user agent, path, and timestamp
 - **Security headers** — HSTS, CSP, XSS protection, clickjacking protection
+- **Optional SSO** — Authelia, Keycloak, Authentik (or any OIDC IdP) in front of zellij via oauth2-proxy or native forward-auth
 - **Strict TLS** — TLS 1.2 minimum, modern cipher suites, SNI strict mode
 
 ## Architecture
@@ -40,12 +41,15 @@ flowchart LR
         subgraph stack["📦 podman compose"]
             direction TB
             traefik["🚦 Traefik<br/>:8080 / :8443"]
+            o2p["🔐 oauth2-proxy<br/><i>optional SSO</i>"]
             logs[("📜 access.log<br/>JSON")]
             f2b["🛡️ fail2ban"]
             alerter["🔔 Alerter<br/>+ 📊 stats :8083"]
             db[("🗄️ stats.db")]
         end
     end
+
+    idp["🏛️ IdP<br/>Authelia · Keycloak · Authentik"]
 
     subgraph notify["📣 Notifications"]
         direction TB
@@ -56,6 +60,8 @@ flowchart LR
 
     user == "🔒 HTTPS / WSS" ==> traefik
     traefik -- "🔌 HTTP + WS" --> zellij
+    traefik -. "🔐 forwardAuth" .-> o2p
+    o2p -. "OIDC" .-> idp
     traefik -- "📊 /stats" --> alerter
     traefik -. "✍️ writes" .-> logs
     logs -. "👀 tails" .-> f2b
@@ -69,6 +75,7 @@ flowchart LR
     classDef app fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d
     classDef guard fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
     classDef alert fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f
+    classDef sso fill:#fce7f3,stroke:#db2777,stroke-width:2px,stroke-dasharray:5 3,color:#831843
     classDef store fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#1e293b
 
     class user client
@@ -76,6 +83,7 @@ flowchart LR
     class zellij app
     class f2b guard
     class alerter,tg,dc,wh alert
+    class o2p,idp sso
     class logs,db store
 
     style host fill:transparent,stroke:#64748b,stroke-width:2px,stroke-dasharray:6 4
@@ -158,6 +166,7 @@ Copy `.env.example` to `.env` and edit:
 | `TELEGRAM_CHAT_ID` | | — | Chat or channel ID for alerts |
 | `WEBHOOK_URLS` | | — | Comma-separated webhook URLs |
 | `WEBHOOK_BODY_TEMPLATE` | | — | JSON template for webhook body (see [Alerting](docs/alerting.md)) |
+| `SSO_MODE` | | `off` | `oauth2-proxy` or `forward-auth` to put an IdP login in front (see [SSO](docs/sso.md)) |
 
 ## TLS Modes
 
@@ -253,6 +262,11 @@ just lint           # lint alerter Python (ruff check + format)
 just format         # auto-format alerter Python
 just test           # run alerter unit tests
 just validate       # validate compose.yaml
+
+just sso-check      # check SSO settings and IdP discovery (docs/sso.md)
+just sso-cookie-secret  # generate SSO_COOKIE_SECRET
+just logs-sso       # follow oauth2-proxy logs
+just test-sso       # SSO end-to-end test with a mock IdP
 ```
 
 ## Documentation
@@ -263,6 +277,7 @@ just validate       # validate compose.yaml
 | [TLS Configuration](docs/tls.md) | Self-signed, Let's Encrypt, DNS-01, BYO cert, hardening |
 | [Alerting](docs/alerting.md) | Telegram, Discord, webhooks, dedup cooldown |
 | [Integrations](docs/integrations.md) | n8n, Slack, ntfy.sh, Home Assistant |
+| [SSO](docs/sso.md) | Authelia, Keycloak, Authentik login in front of zellij |
 | [Fail2ban](docs/fail2ban.md) | Automatic IP banning, tuning, GitOps config |
 | [IP Allowlist](docs/ip-allowlist.md) | Restrict access to specific IPs/CIDRs |
 | [Log Rotation](docs/log-rotation.md) | Logrotate setup, portable install |
@@ -279,11 +294,14 @@ just validate       # validate compose.yaml
 ├── docs/                       # advanced usage documentation
 ├── traefik/
 │   ├── traefik.yml             # static config (entrypoints, access log)
-│   ├── entrypoint.sh           # builds multi-domain Host rule at startup
+│   ├── entrypoint.sh           # builds multi-domain Host rule + SSO wiring at startup
+│   ├── sso/                    # forwardAuth templates per SSO_MODE
 │   └── dynamic/
 │       ├── routers.yml         # routing rules + backend (host:8082)
 │       ├── middlewares.yml     # security headers, real-IP extraction
 │       └── tls.yml             # TLS options (min version, ciphers)
+├── tests/
+│   └── sso-e2e.sh              # SSO end-to-end test (mock IdP)
 ├── alerter/
 │   ├── alerter.py              # log tailer + alert dispatcher
 │   ├── pyproject.toml          # dependencies + ruff config
@@ -296,7 +314,7 @@ just validate       # validate compose.yaml
 
 ## Security Notes
 
-- Zellij token authentication is handled by the zellij web server — Traefik adds no extra auth layer.
+- Zellij token authentication is handled by the zellij web server. Optionally, [SSO](docs/sso.md) puts an IdP login in front of it; zellij still asks for its token afterwards.
 - HTTP permanently redirects to HTTPS; plain-text connections are not served.
 - TLS 1.2 minimum; TLS 1.0/1.1 are disabled.
 - For production deployments, use Let's Encrypt or a CA-signed cert. Self-signed certs expose users to MITM if browser warnings are bypassed.

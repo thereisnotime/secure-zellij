@@ -1,6 +1,6 @@
 services:
   traefik:
-    image: traefik:v3.7.19
+    image: docker.io/library/traefik:v3.7.19
     container_name: secure-zellij-traefik
     restart: unless-stopped
     network_mode: host
@@ -9,6 +9,7 @@ services:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./traefik/dynamic:/etc/traefik/dynamic:ro
       - ./traefik/entrypoint.sh:/entrypoint.sh:ro
+      - ./traefik/sso:/etc/traefik/sso:ro
       - traefik-logs:/var/log/traefik
       - letsencrypt:/letsencrypt
     environment:
@@ -17,14 +18,58 @@ services:
       - ACME_EMAIL=${ACME_EMAIL:-}
       - HTTP_PORT=${HTTP_PORT:-8080}
       - HTTPS_PORT=${HTTPS_PORT:-8443}
+      - SSO_MODE=${SSO_MODE:-off}
+      - SSO_PROXY_PORT=${SSO_PROXY_PORT:-4180}
+      - SSO_FORWARD_AUTH_URL=${SSO_FORWARD_AUTH_URL:-}
+      - SSO_CALLBACK_PREFIX=${SSO_CALLBACK_PREFIX:-}
+      - SSO_CALLBACK_URL=${SSO_CALLBACK_URL:-}
     healthcheck:
       test: ["CMD", "traefik", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
 
+  # Only started with the `sso` profile (`just up` adds it when SSO_MODE=oauth2-proxy).
+  # See docs/sso.md.
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.6@sha256:c3415e8660af553f5e18f5d90db050614c02493c0ac6260ac59442f6d9b12048
+    container_name: secure-zellij-oauth2-proxy
+    profiles: [sso]
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      - OAUTH2_PROXY_HTTP_ADDRESS=127.0.0.1:${SSO_PROXY_PORT:-4180}
+      - OAUTH2_PROXY_PROVIDER=${SSO_PROVIDER:-oidc}
+      - OAUTH2_PROXY_PROVIDER_DISPLAY_NAME=${SSO_PROVIDER_NAME:-SSO}
+      - OAUTH2_PROXY_OIDC_ISSUER_URL=${SSO_OIDC_ISSUER_URL:-}
+      - OAUTH2_PROXY_CLIENT_ID=${SSO_CLIENT_ID:-}
+      - OAUTH2_PROXY_CLIENT_SECRET=${SSO_CLIENT_SECRET:-}
+      - OAUTH2_PROXY_COOKIE_SECRET=${SSO_COOKIE_SECRET:-}
+      - OAUTH2_PROXY_SCOPE=${SSO_OIDC_SCOPE:-openid email profile}
+      - OAUTH2_PROXY_OIDC_GROUPS_CLAIM=${SSO_GROUPS_CLAIM:-groups}
+      - OAUTH2_PROXY_ALLOWED_GROUPS=${SSO_ALLOWED_GROUPS:-}
+      - OAUTH2_PROXY_EMAIL_DOMAINS=${SSO_ALLOWED_EMAIL_DOMAINS:-*}
+      - OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL=${SSO_ALLOW_UNVERIFIED_EMAIL:-false}
+      # Empty = built per request from the host the browser used (DOMAIN or EXTRA_DOMAINS)
+      - OAUTH2_PROXY_REDIRECT_URL=${SSO_REDIRECT_URL:-}
+      - OAUTH2_PROXY_WHITELIST_DOMAINS=${DOMAIN}:*,${SSO_EXTRA_REDIRECT_DOMAINS:-}
+      - OAUTH2_PROXY_COOKIE_NAME=_secure_zellij_sso
+      - OAUTH2_PROXY_COOKIE_SECURE=true
+      - OAUTH2_PROXY_COOKIE_SAMESITE=lax
+      - OAUTH2_PROXY_COOKIE_EXPIRE=${SSO_COOKIE_EXPIRE:-12h}
+      - OAUTH2_PROXY_CODE_CHALLENGE_METHOD=S256
+      - OAUTH2_PROXY_REVERSE_PROXY=true
+      - OAUTH2_PROXY_TRUSTED_PROXY_IPS=127.0.0.1/32
+      - OAUTH2_PROXY_UPSTREAMS=static://202
+      - OAUTH2_PROXY_SKIP_PROVIDER_BUTTON=true
+      - OAUTH2_PROXY_SET_XAUTHREQUEST=true
+      - OAUTH2_PROXY_SKIP_PROVIDER_CA_VERIFY=${SSO_SKIP_CA_VERIFY:-false}
+
   fail2ban:
-    image: crazymax/fail2ban:1.1.1@sha256:34a1e5cc4ac7bb2527b806bcf1c3aa7f747db51930540f648521ba927a58c0bc
+    image: docker.io/crazymax/fail2ban:1.1.1@sha256:34a1e5cc4ac7bb2527b806bcf1c3aa7f747db51930540f648521ba927a58c0bc
     container_name: secure-zellij-fail2ban
     restart: unless-stopped
     network_mode: host

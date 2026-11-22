@@ -5,6 +5,10 @@ api:
 ping:
   entryPoint: ping
 
+global:
+  # Drop headers like X_Auth_Request_User that alias the SSO identity headers
+  aliasHeadersStrategy: delete
+
 entryPoints:
   ping:
     address: "127.0.0.1:8099"
@@ -42,6 +46,10 @@ accessLog:
         User-Agent: keep
         X-Real-Ip: keep
         X-Forwarded-For: keep
+        # Session cookies and credentials (zellij, SSO) must never hit the log
+        Cookie: redact
+        Authorization: redact
+        Proxy-Authorization: redact
 
 # Uncomment to enable Let's Encrypt
 # certificatesResolvers:

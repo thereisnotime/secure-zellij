@@ -1,0 +1,24 @@
+# SSO via the IdP's own forward-auth endpoint (SSO_MODE=forward-auth).
+# entrypoint.sh copies this into the live dynamic config and fills in the
+# placeholders. Authelia: .../api/authz/forward-auth
+#                Authentik: .../outpost.goauthentik.io/auth/traefik
+http:
+  middlewares:
+    sso:
+      forwardAuth:
+        address: "SSO_FORWARD_AUTH_URL"
+        trustForwardHeader: true
+        maxResponseBodySize: 4194304
+        authResponseHeaders:
+          # Authelia
+          - Remote-User
+          - Remote-Groups
+          - Remote-Email
+          - Remote-Name
+          # Authentik
+          - X-authentik-username
+          - X-authentik-groups
+          - X-authentik-email
+          - X-authentik-name
+          - X-authentik-uid
+          - X-authentik-entitlements
