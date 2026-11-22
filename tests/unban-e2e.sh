@@ -11,6 +11,9 @@ set -euo pipefail
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 COMPOSE=${COMPOSE:-podman compose}
 STATS=18784
+# Throwaway basic-auth login for the test alerter
+STATS_USER="admin"
+STATS_PASS=$(openssl rand -hex 12)
 ALERTER_IMAGE=localhost/sz-e2e-alerter:latest
 NAMES=(sz-e2e-f2b sz-e2e-unban sz-e2e-alerter)
 VOLUMES=(sz-e2e-f2b-run sz-e2e-unban-req)
@@ -54,14 +57,14 @@ podman run -d --name sz-e2e-unban --network none --read-only --cap-drop ALL \
     -v sz-e2e-f2b-run:/var/run/fail2ban -v sz-e2e-unban-req:/requests \
     "$F2B_IMAGE" -I /unban-helper.py >/dev/null
 podman run -d --name sz-e2e-alerter --network host \
-    -e STATS_PORT=$STATS -e STATS_DB=/data/stats.db -e STATS_USERNAME=admin -e STATS_PASSWORD=pw \
+    -e STATS_PORT=$STATS -e STATS_DB=/data/stats.db -e "STATS_USERNAME=$STATS_USER" -e "STATS_PASSWORD=$STATS_PASS" \
     -e SSO_MODE=oauth2-proxy -e F2B_DB=/fail2ban/fail2ban.sqlite3 -e F2B_POLL_SECONDS=1 -e UNBAN_DIR=/unban \
     -v "$WORK/db:/fail2ban:ro,z" -v "$WORK/data:/data:z" -v "$WORK/log:/var/log/traefik:ro,z" \
     -v sz-e2e-unban-req:/unban "$ALERTER_IMAGE" >/dev/null
 
 for _ in $(seq 60); do
     podman exec sz-e2e-f2b fail2ban-client ping >/dev/null 2>&1 &&
-        curl -fs -o /dev/null -u admin:pw "http://127.0.0.1:$STATS/api" && break
+        curl -fs -o /dev/null -u "$STATS_USER:$STATS_PASS" "http://127.0.0.1:$STATS/api" && break
     sleep 1
 done
 
@@ -76,26 +79,30 @@ for _ in $(seq 20); do
 done
 
 bans() {
-    curl -fs -u admin:pw "http://127.0.0.1:$STATS/api" | python3 -I -c '
+    curl -fs -u "$STATS_USER:$STATS_PASS" "http://127.0.0.1:$STATS/api" | python3 -I -c '
 import json, sys
 b = json.load(sys.stdin)["bans"]
 print(b["active"], b["unban"], [(x["ip"], x["active"], x["sso_user"], x["unbanned_by"]) for x in b["recent"]])'
 }
 # unban <ip> <jail>; ORIGIN, XRW and AUTH override what the dashboard page sends
 unban() {
-    curl -s -u "${AUTH:-admin:pw}" -H 'Content-Type: application/json' \
+    curl -s -u "${AUTH:-$STATS_USER:$STATS_PASS}" -H 'Content-Type: application/json' \
         -H "X-Requested-With: ${XRW-secure-zellij}" -H "Origin: ${ORIGIN:-http://127.0.0.1:$STATS}" \
         -w ' %{http_code}' -d "{\"ip\":\"$1\",\"jail\":\"$2\"}" "http://127.0.0.1:$STATS/api/unban"
 }
 
 echo "== ban shows up"
 expect "dashboard lists the active ban with its SSO user" "$(bans)" "^1 True \[\('203.0.113.9', True, 'alice', ''\)\]$"
+for _ in $(seq 10); do # the alerter polls fail2ban's DB every second
+    podman logs sz-e2e-alerter 2>&1 | grep -q 'Ban: 203.0.113.9' && break
+    sleep 1
+done
 expect "alerter announced the ban" "$(podman logs sz-e2e-alerter 2>&1)" "Ban: 203.0.113.9 \(alice\) in traefik-zellij"
 
 echo "== guards"
 expect "cross-site request refused" "$(ORIGIN=https://evil.example unban 203.0.113.9 traefik-zellij)" "cross-site request refused.* 403$"
 expect "missing CSRF header refused" "$(XRW='' unban 203.0.113.9 traefik-zellij)" " 403$"
-expect "wrong password refused" "$(AUTH=admin:nope unban 203.0.113.9 traefik-zellij)" " 401$"
+expect "wrong password refused" "$(AUTH="$STATS_USER:wrong" unban 203.0.113.9 traefik-zellij)" " 401$"
 expect "jail outside UNBAN_JAILS refused by the helper" "$(unban 203.0.113.9 sshd)" "not in UNBAN_JAILS.* 200$"
 expect "still banned after refused attempts" "$(podman exec sz-e2e-f2b fail2ban-client get traefik-zellij banip)" "203.0.113.9"
 
