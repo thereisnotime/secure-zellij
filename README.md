@@ -199,7 +199,7 @@ No changes needed. Traefik auto-generates a self-signed cert. The browser will s
 
 ## Alerting
 
-Alerts fire on every WebSocket connection, i.e. when a terminal session is established. Traefik logs hijacked WebSocket connections with `DownstreamStatus: 0`, which is what `ALERT_ON_STATUS` matches by default.
+Alerts fire on every WebSocket connection, i.e. when a terminal session is established. Traefik logs hijacked WebSocket connections with `DownstreamStatus: 0`, which is what `ALERT_ON_STATUS` matches by default. With [SSO](docs/sso.md) on, alerts and the stats dashboard also show who signed in.
 
 ### Telegram
 

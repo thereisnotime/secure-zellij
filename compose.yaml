@@ -111,6 +111,8 @@ services:
       - STATS_DB=/data/stats.db
       - STATS_USERNAME=${STATS_USERNAME:-}
       - STATS_PASSWORD=${STATS_PASSWORD:-}
+      # Tells the alerter which SSO identity headers in the access log to trust
+      - SSO_MODE=${SSO_MODE:-off}
     networks:
       - proxy
     depends_on:

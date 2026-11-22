@@ -38,6 +38,24 @@ DB_PATH = os.environ.get("STATS_DB", "/data/stats.db")
 STATS_PORT = int(os.environ.get("STATS_PORT", "8083"))
 STATS_USERNAME = os.environ.get("STATS_USERNAME", "")
 STATS_PASSWORD = os.environ.get("STATS_PASSWORD", "")
+# Which identity headers Traefik's forwardAuth sets, per SSO_MODE (docs/sso.md).
+# forwardAuth deletes every header in its authResponseHeaders list before copying
+# the IdP's answer in, so only these are trustworthy. With SSO off nothing is,
+# since a client can send any header it likes.
+SSO_MODE = os.environ.get("SSO_MODE", "off").strip() or "off"
+_SSO_USER_HEADERS = {
+    "oauth2-proxy": (
+        "X-Auth-Request-Preferred-Username",
+        "X-Auth-Request-User",
+        "X-Auth-Request-Email",
+    ),
+    # Authelia, then Authentik
+    "forward-auth": ("Remote-User", "X-Authentik-Username", "Remote-Email", "X-Authentik-Email"),
+}
+_SSO_EMAIL_HEADERS = {
+    "oauth2-proxy": ("X-Auth-Request-Email",),
+    "forward-auth": ("Remote-Email", "X-Authentik-Email"),
+}
 
 _last_alert: dict[str, float] = {}
 _db_lock = threading.Lock()
@@ -76,6 +94,10 @@ _HTML = """<!DOCTYPE html>
     .bar:hover { opacity: 1; }
     .chart-labels { display: flex; justify-content: space-between; color: var(--dim); font-size: 0.65rem; margin-top: 0.3rem; padding: 0 0.1rem; }
     #status { font-size: 0.72rem; color: var(--dim); margin-left: auto; }
+    .sso-col { display: none; }
+    body.sso .sso-col { display: table-cell; }
+    .sso-card { display: none; }
+    body.sso .sso-card { display: block; }
     .empty { color: var(--dim); padding: 0.5rem 0.6rem; font-style: italic; }
   </style>
 </head>
@@ -85,6 +107,7 @@ _HTML = """<!DOCTYPE html>
   <div class="grid">
     <div class="card"><div class="val" id="c-active">&#x2014;</div><div class="lbl">Active Sessions (5m)</div></div>
     <div class="card"><div class="val" id="c-ips1h">&#x2014;</div><div class="lbl">Unique IPs (1h)</div></div>
+    <div class="card sso-card"><div class="val" id="c-users1h">&#x2014;</div><div class="lbl">SSO Users (1h)</div></div>
     <div class="card"><div class="val" id="c-today">&#x2014;</div><div class="lbl">Connections Today</div></div>
     <div class="card"><div class="val" id="c-total">&#x2014;</div><div class="lbl">All-Time</div></div>
   </div>
@@ -105,8 +128,8 @@ _HTML = """<!DOCTYPE html>
 
   <div class="section">
     <h2>Recent Connections</h2>
-    <table><thead><tr><th>Time</th><th>IP</th><th>Session</th><th>User Agent</th></tr></thead>
-    <tbody id="tb-recent"><tr><td colspan="4" class="empty">loading&hellip;</td></tr></tbody></table>
+    <table><thead><tr><th>Time</th><th class="sso-col">User</th><th>IP</th><th>Session</th><th>User Agent</th></tr></thead>
+    <tbody id="tb-recent"><tr><td colspan="5" class="empty">loading&hellip;</td></tr></tbody></table>
   </div>
 
   <script>
@@ -124,9 +147,11 @@ _HTML = """<!DOCTYPE html>
         const s = d.summary;
         document.getElementById('c-active').textContent = s.active_sessions;
         document.getElementById('c-ips1h').textContent  = s.connected_ips_1h;
+        document.getElementById('c-users1h').textContent = s.sso_users_1h;
         document.getElementById('c-today').textContent  = s.connections_today;
         document.getElementById('c-total').textContent  = s.connections_total;
         document.getElementById('status').textContent   = 'updated ' + new Date().toLocaleTimeString();
+        document.body.classList.toggle('sso', d.sso_enabled);
 
         const hc = d.hourly_chart;
         const maxV = Math.max(...hc.map(h => h.count), 1);
@@ -151,11 +176,12 @@ _HTML = """<!DOCTYPE html>
         document.getElementById('tb-recent').innerHTML = d.recent_connections.length
           ? d.recent_connections.map(c =>
               '<tr><td>' + fmtTs(c.ts) + '</td>' +
+              '<td class="sso-col">' + (c.sso_user ? esc(c.sso_user) : '<em>unknown</em>') + '</td>' +
               '<td>' + esc(c.ip) + '</td>' +
               '<td>' + (c.session ? esc(c.session) : '<em>welcome</em>') + '</td>' +
               '<td title="' + esc(c.user_agent) + '">' + esc(c.user_agent.substring(0,55)) + '</td></tr>'
             ).join('')
-          : '<tr><td colspan="4" class="empty">no connections yet</td></tr>';
+          : '<tr><td colspan="5" class="empty">no connections yet</td></tr>';
       } catch(e) {
         document.getElementById('status').textContent = 'fetch error';
         console.error(e);
@@ -181,9 +207,13 @@ def init_db() -> None:
                 ip         TEXT NOT NULL,
                 session    TEXT NOT NULL DEFAULT '',
                 user_agent TEXT NOT NULL DEFAULT '',
-                path       TEXT NOT NULL DEFAULT ''
+                path       TEXT NOT NULL DEFAULT '',
+                sso_user   TEXT NOT NULL DEFAULT ''
             )
         """)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(connections)")}
+        if "sso_user" not in cols:  # databases from before SSO support
+            conn.execute("ALTER TABLE connections ADD COLUMN sso_user TEXT NOT NULL DEFAULT ''")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON connections(ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ip ON connections(ip)")
         conn.commit()
@@ -199,13 +229,16 @@ def _parse_session(path: str) -> str | None:
     return None
 
 
-def store_event(ip: str, session: str, user_agent: str, path: str, ts: str | None = None) -> None:
+def store_event(
+    ip: str, session: str, user_agent: str, path: str, ts: str | None = None, sso_user: str = ""
+) -> None:
     if ts is None:
         ts = datetime.now(UTC).isoformat()
     with _db_lock, sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT INTO connections (ts, ip, session, user_agent, path) VALUES (?,?,?,?,?)",
-            (ts, ip, session, user_agent, path),
+            "INSERT INTO connections (ts, ip, session, user_agent, path, sso_user)"
+            " VALUES (?,?,?,?,?,?)",
+            (ts, ip, session, user_agent, path, sso_user),
         )
         conn.commit()
 
@@ -234,6 +267,10 @@ def get_stats() -> dict:
         active = conn.execute(
             "SELECT COUNT(DISTINCT session) FROM connections WHERE ts>=?", (ago_5m,)
         ).fetchone()[0]
+        users_1h = conn.execute(
+            "SELECT COUNT(DISTINCT sso_user) FROM connections WHERE ts>=? AND sso_user!=''",
+            (ago_1h,),
+        ).fetchone()[0]
         ips_1h = conn.execute(
             "SELECT COUNT(DISTINCT ip) FROM connections WHERE ts>=?", (ago_1h,)
         ).fetchone()[0]
@@ -254,7 +291,8 @@ def get_stats() -> dict:
         ).fetchall()
 
         recent = conn.execute(
-            "SELECT ts, ip, session, user_agent FROM connections ORDER BY ts DESC LIMIT 50"
+            "SELECT ts, ip, session, user_agent, sso_user FROM connections"
+            " ORDER BY ts DESC LIMIT 50"
         ).fetchall()
 
         hourly_rows = conn.execute(
@@ -267,9 +305,11 @@ def get_stats() -> dict:
 
     return {
         "generated_at": now.isoformat(),
+        "sso_enabled": SSO_MODE != "off",
         "summary": {
             "active_sessions": active,
             "connected_ips_1h": ips_1h,
+            "sso_users_1h": users_1h,
             "connections_today": c_today,
             "connections_total": c_total,
         },
@@ -283,7 +323,13 @@ def get_stats() -> dict:
             for r in sessions
         ],
         "recent_connections": [
-            {"ts": r["ts"], "ip": r["ip"], "session": r["session"], "user_agent": r["user_agent"]}
+            {
+                "ts": r["ts"],
+                "ip": r["ip"],
+                "session": r["session"],
+                "user_agent": r["user_agent"],
+                "sso_user": r["sso_user"],
+            }
             for r in recent
         ],
         "hourly_chart": _fill_hourly([(r["hour"], r["cnt"]) for r in hourly_rows]),
@@ -364,6 +410,24 @@ def _extract_ip(entry: dict) -> str:
     return "unknown"
 
 
+def _header(entry: dict, names: tuple[str, ...]) -> str:
+    """First non-empty request header from a Traefik log entry (case-insensitive)."""
+    logged = {k.lower(): v for k, v in entry.items() if k.startswith("request_")}
+    for name in names:
+        val = logged.get(f"request_{name}".lower(), "")
+        if isinstance(val, str) and val.strip() and val != "REDACTED":
+            return val.strip()[:256]
+    return ""
+
+
+def _extract_sso(entry: dict, mode: str | None = None) -> tuple[str, str]:
+    """Return (user, email) set by the SSO middleware, or empty strings."""
+    mode = SSO_MODE if mode is None else mode
+    return _header(entry, _SSO_USER_HEADERS.get(mode, ())), _header(
+        entry, _SSO_EMAIL_HEADERS.get(mode, ())
+    )
+
+
 def _build_payload(entry: dict) -> dict:
     ip = _extract_ip(entry)
     forwarded = entry.get("request_X-Forwarded-For", "")
@@ -372,6 +436,7 @@ def _build_payload(entry: dict) -> dict:
     status = entry.get("DownstreamStatus", 0)
     ts = entry.get("time", datetime.now(UTC).isoformat())
     service = entry.get("ServiceName", "unknown")
+    sso_user, sso_email = _extract_sso(entry)
 
     return {
         "event": "zellij_connect",
@@ -382,7 +447,23 @@ def _build_payload(entry: dict) -> dict:
         "path": path,
         "status": status,
         "service": service,
+        "sso_user": sso_user,
+        "sso_email": sso_email,
     }
+
+
+def _md_safe(val: str) -> str:
+    return val.replace("`", "'")
+
+
+def _user_line(payload: dict, code: bool) -> str:
+    user = payload.get("sso_user", "")
+    if not user:
+        return ""
+    email = payload.get("sso_email", "")
+    who = f"{user} <{email}>" if email and email != user else user
+    who = _md_safe(who)
+    return f"User: `{who}`\n" if code else f"User: {who}\n"
 
 
 def send_telegram(payload: dict) -> None:
@@ -393,6 +474,7 @@ def send_telegram(payload: dict) -> None:
     ua = payload["user_agent"][:100]
     text = (
         f"🔌 *Zellij connection*\n"
+        f"{_user_line(payload, code=True)}"
         f"IP: `{ip}`{fwd}\n"
         f"Path: `{payload['path']}`\n"
         f"UA: `{ua}`\n"
@@ -438,6 +520,7 @@ def send_discord(payload: dict) -> None:
     ua = payload["user_agent"][:100]
     text = (
         f"\U0001f50c **Zellij connection**\n"
+        f"{_user_line(payload, code=False)}"
         f"IP: {ip}{fwd}\n"
         f"Path: {payload['path']}\n"
         f"UA: {ua}\n"
@@ -462,6 +545,8 @@ def _validate_config() -> None:
         "path": "/",
         "status": "101",
         "service": "s",
+        "sso_user": "alice",
+        "sso_email": "alice@example.com",
     }
     try:
         rendered = WEBHOOK_BODY_TEMPLATE.format(**dummy)
@@ -490,6 +575,7 @@ def _print_config() -> None:
     print(f"[alerter]   Webhooks  {webhook_status}  {webhook_label}", flush=True)
     print(f"[alerter]   Cooldown  {ALERT_COOLDOWN_SECONDS}s", flush=True)
     print(f"[alerter]   Stats     +  :{STATS_PORT} {auth_label}", flush=True)
+    print(f"[alerter]   SSO user  {'+' if SSO_MODE != 'off' else '-'}  ({SSO_MODE})", flush=True)
 
 
 # ── Log processing ─────────────────────────────────────────────────────────────
@@ -515,7 +601,14 @@ def process_line(line: str) -> None:
         session = _parse_session(payload["path"])
         # Use StartUTC (connection open time) rather than when the log was written
         ts_open = entry.get("StartUTC", entry.get("time", datetime.now(UTC).isoformat()))
-        store_event(payload["client_ip"], session, payload["user_agent"], payload["path"], ts_open)
+        store_event(
+            payload["client_ip"],
+            session,
+            payload["user_agent"],
+            payload["path"],
+            ts_open,
+            payload["sso_user"],
+        )
 
     if status != ALERT_ON_STATUS:
         return
@@ -527,13 +620,15 @@ def process_line(line: str) -> None:
         stale = [k for k, v in _last_alert.items() if v < cutoff]
         for k in stale:
             del _last_alert[k]
-    ip = payload["client_ip"]
-    last = _last_alert.get(ip)
+    # Different SSO users behind one IP (office NAT, VPN) each get their own alert
+    who = f"{payload['sso_user']}@" if payload["sso_user"] else ""
+    key = who + payload["client_ip"]
+    last = _last_alert.get(key)
     if last is not None and now - last < ALERT_COOLDOWN_SECONDS:
-        print(f"[alerter] Suppressed duplicate alert for {ip}", flush=True)
+        print(f"[alerter] Suppressed duplicate alert for {key}", flush=True)
         return
-    _last_alert[ip] = now
-    print(f"[alerter] Connection: {payload['client_ip']} -> {payload['path']}", flush=True)
+    _last_alert[key] = now
+    print(f"[alerter] Connection: {who}{payload['client_ip']} -> {payload['path']}", flush=True)
     send_telegram(payload)
     send_webhooks(payload)
     send_discord(payload)
@@ -568,6 +663,7 @@ def _backfill(path: str) -> None:
                         payload["user_agent"],
                         payload["path"],
                         ts_open,
+                        payload["sso_user"],
                     )
                     count += 1
         print(f"[alerter] Backfilled {count} historical connections", flush=True)

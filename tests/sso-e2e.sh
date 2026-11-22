@@ -139,6 +139,10 @@ expect "backend sees SSO identity" "$(cat "$WORK/body")" "user=alice groups=zell
 expect "session cookie reused, aliased header ignored" "$(again)" "user=alice "
 expect "Traefik routers carry the sso middleware" \
     "$(podman exec sz-e2e-traefik grep -c -- '- sso' /etc/traefik/dynamic-live/routers.yml)" "^2$"
+# The alerter reads the SSO user from here (alerter.py _extract_sso)
+expect "SSO user logged for the alerter" \
+    "$(podman exec sz-e2e-traefik sh -c 'grep -o "\"request_X-Auth-Request-Preferred-Username\":\"[^\"]*\"" /tmp/access.log | sort -u')" \
+    '^"request_X-Auth-Request-Preferred-Username":"alice"$'
 expect "Cookie header redacted in access log" \
     "$(podman exec sz-e2e-traefik sh -c 'grep -o "\"request_Cookie\":\"[^\"]*\"" /tmp/access.log | sort -u')" '^"request_Cookie":"REDACTED"$'
 

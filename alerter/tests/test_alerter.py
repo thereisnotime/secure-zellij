@@ -297,3 +297,104 @@ def test_validate_config_silent_when_no_template(capsys):
         a.WEBHOOK_BODY_TEMPLATE = original
     captured = capsys.readouterr()
     assert captured.err == ""
+
+
+# ── SSO user ──────────────────────────────────────────────────────────────────
+
+_O2P_ENTRY = {
+    "ClientAddr": "6.6.6.6:9",
+    "RequestPath": "/s",
+    "request_X-Auth-Request-User": "c0ffee-sub",
+    "request_X-Auth-Request-Preferred-Username": "alice",
+    "request_X-Auth-Request-Email": "alice@example.com",
+}
+
+
+def test_sso_user_from_oauth2_proxy_headers():
+    assert a._extract_sso(_O2P_ENTRY, "oauth2-proxy") == ("alice", "alice@example.com")
+
+
+def test_sso_user_falls_back_to_email():
+    entry = {"request_X-Auth-Request-Email": "bob@example.com"}
+    assert a._extract_sso(entry, "oauth2-proxy") == ("bob@example.com", "bob@example.com")
+
+
+def test_sso_user_from_authelia_and_authentik():
+    assert a._extract_sso({"request_Remote-User": "carol"}, "forward-auth")[0] == "carol"
+    # Traefik canonicalises header names, match case-insensitively anyway
+    assert a._extract_sso({"request_X-authentik-username": "dave"}, "forward-auth")[0] == "dave"
+
+
+def test_sso_user_ignored_when_sso_off():
+    # Without the forwardAuth middleware a client can send these headers itself
+    assert a._extract_sso(_O2P_ENTRY, "off") == ("", "")
+
+
+def test_sso_user_ignores_headers_of_the_other_mode():
+    # forward-auth doesn't strip X-Auth-Request-*, so they must not be trusted there
+    assert a._extract_sso(_O2P_ENTRY, "forward-auth") == ("", "")
+
+
+def test_sso_user_in_payload_and_alerts(mocker, monkeypatch):
+    monkeypatch.setattr(a, "SSO_MODE", "oauth2-proxy")
+    p = a._build_payload(_O2P_ENTRY)
+    assert p["sso_user"] == "alice"
+    assert p["sso_email"] == "alice@example.com"
+    monkeypatch.setattr(a, "DISCORD_WEBHOOK_URL", "https://discord.example.com/webhook")
+    monkeypatch.setattr(a, "TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setattr(a, "TELEGRAM_CHAT_ID", "1")
+    mock_post = mocker.patch("alerter.requests.post")
+    a.send_discord(p)
+    a.send_telegram(p)
+    discord_text = mock_post.call_args_list[0][1]["json"]["content"]
+    telegram_text = mock_post.call_args_list[1][1]["json"]["text"]
+    assert "User: alice <alice@example.com>" in discord_text
+    assert "User: `alice <alice@example.com>`" in telegram_text
+
+
+def test_no_user_line_without_sso(mocker, monkeypatch):
+    monkeypatch.setattr(a, "DISCORD_WEBHOOK_URL", "https://discord.example.com/webhook")
+    mock_post = mocker.patch("alerter.requests.post")
+    a.send_discord(_DISCORD_PAYLOAD)
+    assert "User:" not in mock_post.call_args[1]["json"]["content"]
+
+
+def test_cooldown_is_per_user_behind_one_ip(mocker, monkeypatch):
+    a._last_alert.clear()
+    monkeypatch.setattr(a, "SSO_MODE", "oauth2-proxy")
+    send_tg = mocker.patch.object(a, "send_telegram")
+    mocker.patch.object(a, "send_webhooks")
+    mocker.patch.object(a, "send_discord")
+    for user in ("alice", "bob", "alice"):
+        a.process_line(
+            json.dumps(
+                {
+                    "DownstreamStatus": a.ALERT_ON_STATUS,
+                    "RequestPath": "/s",
+                    "ClientAddr": "7.7.7.7:9",
+                    "request_X-Auth-Request-Preferred-Username": user,
+                }
+            )
+        )
+    assert send_tg.call_count == 2
+    a._last_alert.clear()
+
+
+def test_stats_store_sso_user_and_migrate_old_db(tmp_path, monkeypatch):
+    import sqlite3
+
+    db = tmp_path / "stats.db"
+    with sqlite3.connect(db) as conn:  # schema from before SSO support
+        conn.execute(
+            "CREATE TABLE connections (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
+            " ip TEXT NOT NULL, session TEXT NOT NULL DEFAULT '',"
+            " user_agent TEXT NOT NULL DEFAULT '', path TEXT NOT NULL DEFAULT '')"
+        )
+        conn.execute("INSERT INTO connections (ts, ip) VALUES ('2020-01-01T00:00:00', '1.1.1.1')")
+    monkeypatch.setattr(a, "DB_PATH", str(db))
+    a.init_db()
+    a.store_event("2.2.2.2", "s", "ua", "/ws/terminal/s", sso_user="alice")
+    stats = a.get_stats()
+    users = [c["sso_user"] for c in stats["recent_connections"]]
+    assert users == ["alice", ""]
+    assert stats["summary"]["sso_users_1h"] == 1

@@ -7,7 +7,7 @@ The alerter sidecar tails Traefik's JSON access log and fires notifications when
 1. Traefik writes JSON access logs to a shared volume (`traefik-logs`)
 2. The alerter container reads from that volume, tailing the log file
 3. On each new line it checks `DownstreamStatus == ALERT_ON_STATUS` (default `0`: Traefik logs hijacked WebSocket connections with status 0, and writes the entry when the connection closes)
-4. If matched and the client IP is outside its cooldown window, it extracts client IP, path, user agent, and timestamp and dispatches to all configured destinations
+4. If matched and the client IP is outside its cooldown window, it extracts client IP, path, user agent, timestamp and, with [SSO](sso.md) on, the signed-in user, and dispatches to all configured destinations
 
 ```mermaid
 flowchart TD
@@ -54,6 +54,7 @@ TELEGRAM_CHAT_ID=-1001234567890
 Example alert:
 ```
 🔌 Zellij connection
+User: `alice <alice@example.com>`
 IP: `1.2.3.4`
 Path: `/my-session`
 UA: `Mozilla/5.0 (X11; Linux x86_64) ...`
@@ -96,9 +97,13 @@ Each URL receives a POST with this JSON body:
   "user_agent": "Mozilla/5.0 ...",
   "path": "/my-session",
   "status": 0,
-  "service": "zellij"
+  "service": "zellij",
+  "sso_user": "alice",
+  "sso_email": "alice@example.com"
 }
 ```
+
+`sso_user` and `sso_email` are empty strings when SSO is off.
 
 ## Webhook body template
 
@@ -120,12 +125,28 @@ Available placeholders:
 | `{path}` | `/my-session` |
 | `{status}` | `0` |
 | `{service}` | `zellij` |
+| `{sso_user}` | `alice` (empty without SSO) |
+| `{sso_email}` | `alice@example.com` (empty without SSO) |
 
 If the template is invalid JSON after substitution, or references an unknown placeholder, the alerter logs a warning and falls back to the default payload.
 
+## SSO user
+
+When [SSO](sso.md) is on, Traefik's forwardAuth middleware adds the signed-in identity to every request and the access log records it. The alerter reads it from there and puts it in alerts, webhook payloads and the stats dashboard (a **User** column under Recent Connections and an **SSO Users (1h)** card).
+
+| `SSO_MODE` | User taken from (first one set) | Email from |
+|---|---|---|
+| `oauth2-proxy` | `X-Auth-Request-Preferred-Username`, `X-Auth-Request-User`, `X-Auth-Request-Email` | `X-Auth-Request-Email` |
+| `forward-auth` | `Remote-User` (Authelia), `X-Authentik-Username` (Authentik), then the email headers | `Remote-Email`, `X-Authentik-Email` |
+| `off` | nothing | nothing |
+
+The alerter gets `SSO_MODE` from the same `.env`, so there's nothing extra to configure. It only trusts the headers of the active mode: forwardAuth strips those from the client's request before adding the IdP's answer, while any other header could have been sent by the client. With SSO off a client can send any header it likes, so no user is shown.
+
+`X-Auth-Request-User` is the OIDC `sub`, which for Keycloak and Authentik is an opaque ID. That's why the preferred username comes first.
+
 ## Alert deduplication
 
-`ALERT_COOLDOWN_SECONDS` (default: `60`) suppresses repeat alerts from the same IP within the configured window. This prevents notification spam if a client reconnects rapidly.
+`ALERT_COOLDOWN_SECONDS` (default: `60`) suppresses repeat alerts from the same IP within the configured window. With SSO on the window is per user and IP, so two people behind the same NAT each get their own alert. This prevents notification spam if a client reconnects rapidly.
 
 ```env
 ALERT_COOLDOWN_SECONDS=60   # suppress repeated alerts from same IP within 60s
@@ -157,7 +178,8 @@ just logs-alerter
 
 Each detected connection is printed to stdout:
 ```
-[alerter] Connection: 1.2.3.4 → /my-session
+[alerter] Connection: 1.2.3.4 -> /my-session
+[alerter] Connection: alice@1.2.3.4 -> /my-session     # with SSO
 ```
 
 Dispatch failures (network errors, bad tokens) are printed to stderr and do not crash the alerter.

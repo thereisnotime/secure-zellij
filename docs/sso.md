@@ -19,6 +19,7 @@ SSO is **off by default**. Nothing changes for an existing install until you set
   - [Authentik](#authentik-forward-auth)
 - [Restricting who gets in](#restricting-who-gets-in)
 - [Sessions and WebSockets](#sessions-and-websockets)
+- [Who connected](#who-connected)
 - [Checking the setup](#checking-the-setup)
 - [Troubleshooting](#troubleshooting)
 - [Reference: all SSO variables](#reference-all-sso-variables)
@@ -386,6 +387,10 @@ In forward-auth mode the restriction lives entirely in the IdP: Authelia `access
 - An open terminal keeps working after the cookie expires. The WebSocket was authorised when it opened, and Traefik doesn't re-check it.
 - **Reconnects** do get checked. A browser WebSocket can't follow a login redirect, so after expiry the terminal just fails to reconnect: reload the page to sign in again. Pick a `SSO_COOKIE_EXPIRE` that covers your usual working day.
 - **Sign out:** `https://<DOMAIN>/oauth2/sign_out` clears the SSO cookie (oauth2-proxy mode). It doesn't end the IdP session.
+
+## Who connected
+
+Alerts, webhook payloads and the stats dashboard show the signed-in SSO user next to the IP. See [Alerting: SSO user](alerting.md#sso-user) for which headers are read in each mode.
 
 ## Checking the setup
 
