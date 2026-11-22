@@ -9,9 +9,13 @@ Telegram bot and/or a list of generic webhook URLs.
 Also serves a live stats dashboard on STATS_PORT (default 8083).
 """
 
+import asyncio
 import base64
+import contextlib
+import ipaddress
 import json
 import os
+import re
 import secrets
 import sqlite3
 import sys
@@ -42,6 +46,16 @@ STATS_PASSWORD = os.environ.get("STATS_PASSWORD", "")
 F2B_DB = os.environ.get("F2B_DB", "")
 BAN_ALERTS = os.environ.get("BAN_ALERTS", "true").strip().lower() in ("1", "true", "yes", "on")
 F2B_POLL_SECONDS = float(os.environ.get("F2B_POLL_SECONDS", "5"))
+# Unban button: requests go to the fail2ban-unban helper through this directory
+UNBAN_ENABLED = os.environ.get("UNBAN_ENABLED", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+UNBAN_DIR = os.environ.get("UNBAN_DIR", "")
+UNBAN_TIMEOUT = float(os.environ.get("UNBAN_TIMEOUT", "10"))
+_JAIL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 # Which identity headers Traefik's forwardAuth sets, per SSO_MODE (docs/sso.md).
 # forwardAuth deletes every header in its authResponseHeaders list before copying
 # the IdP's answer in, so only these are trustworthy. With SSO off nothing is,
@@ -106,6 +120,13 @@ _HTML = """<!DOCTYPE html>
     body.bans .ban-only { display: block; }
     .card.ban-only .val { color: #f7768e; }
     .ban-active { color: #f7768e; }
+    .unban { background: none; border: 1px solid #f7768e; color: #f7768e; border-radius: 4px; font: inherit; font-size: 0.72rem; padding: 0.1rem 0.5rem; cursor: pointer; }
+    .unban-col { display: none; width: 1%; }
+    body.can-unban .unban-col { display: table-cell; }
+    .unban:hover { background: #f7768e; color: var(--bg); }
+    .unban:disabled { opacity: 0.5; cursor: wait; }
+    .unban-hint { color: var(--dim); font-size: 0.72rem; margin-top: 0.4rem; }
+    #unban-msg { font-size: 0.75rem; margin-top: 0.4rem; min-height: 1em; }
     .empty { color: var(--dim); padding: 0.5rem 0.6rem; font-style: italic; }
   </style>
 </head>
@@ -144,8 +165,10 @@ _HTML = """<!DOCTYPE html>
 
   <div class="section ban-only">
     <h2>fail2ban Bans</h2>
-    <table><thead><tr><th>Time</th><th class="sso-col">User</th><th>IP</th><th>Jail</th><th>Failures</th><th>Last Request</th><th>Status</th></tr></thead>
-    <tbody id="tb-bans"><tr><td colspan="7" class="empty">loading&hellip;</td></tr></tbody></table>
+    <table><thead><tr><th>Time</th><th class="sso-col">User</th><th>IP</th><th>Jail</th><th>Failures</th><th>Last Request</th><th>Status</th><th class="unban-col"></th></tr></thead>
+    <tbody id="tb-bans"><tr><td colspan="8" class="empty">loading&hellip;</td></tr></tbody></table>
+    <div id="unban-msg"></div>
+    <div class="unban-hint" id="unban-hint"></div>
   </div>
 
   <script>
@@ -156,6 +179,11 @@ _HTML = """<!DOCTYPE html>
     }
     function fmtTs(s) {
       try { return new Date(s).toLocaleString(); } catch(_) { return s; }
+    }
+    function banStatus(b) {
+      if (b.unbanned_by) return 'unbanned by ' + b.unbanned_by + ' at ' + fmtTs(b.unbanned_at);
+      if (b.active) return 'banned ' + (b.until ? 'until ' + fmtTs(b.until) : 'permanently');
+      return 'expired';
     }
     async function refresh() {
       try {
@@ -171,11 +199,12 @@ _HTML = """<!DOCTYPE html>
         document.getElementById('status').textContent   = 'updated ' + new Date().toLocaleTimeString();
         document.body.classList.toggle('sso', d.sso_enabled);
         document.body.classList.toggle('bans', d.bans.enabled);
+        document.body.classList.toggle('can-unban', d.bans.enabled && d.bans.unban);
         if (d.bans.enabled) {
           document.getElementById('c-banned').textContent  = d.bans.active;
           document.getElementById('c-bans24h').textContent = d.bans.last_24h;
           document.getElementById('tb-bans').innerHTML = !d.bans.available
-            ? '<tr><td colspan="7" class="empty">fail2ban database not readable yet</td></tr>'
+            ? '<tr><td colspan="8" class="empty">fail2ban database not readable yet</td></tr>'
             : d.bans.recent.length
             ? d.bans.recent.map(b =>
                 '<tr><td>' + fmtTs(b.ts) + '</td>' +
@@ -184,11 +213,13 @@ _HTML = """<!DOCTYPE html>
                 '<td>' + esc(b.jail) + '</td>' +
                 '<td>' + esc(b.failures) + '</td>' +
                 '<td title="' + esc(b.user_agent) + '">' + esc(b.path) + (b.status !== '' ? ' (' + esc(b.status) + ')' : '') + '</td>' +
-                '<td>' + (b.active
-                  ? '<span class="ban-active">banned' + (b.until ? ' until ' + fmtTs(b.until) : ' permanently') + '</span>'
-                  : 'expired') + '</td></tr>'
+                '<td title="' + esc(banStatus(b)) + '"' + (b.active ? ' class="ban-active"' : '') + '>' + esc(banStatus(b)) + '</td>' +
+                '<td class="unban-col">' + (b.active
+                  ? '<button class="unban" data-ip="' + esc(b.ip) + '" data-jail="' + esc(b.jail) + '">unban</button>'
+                  : '') + '</td></tr>'
               ).join('')
-            : '<tr><td colspan="7" class="empty">no bans in the last 24h</td></tr>';
+            : '<tr><td colspan="8" class="empty">no bans in the last 24h</td></tr>';
+          document.getElementById('unban-hint').textContent = d.bans.unban ? '' : d.bans.unban_hint;
         }
 
         const hc = d.hourly_chart;
@@ -225,6 +256,29 @@ _HTML = """<!DOCTYPE html>
         console.error(e);
       }
     }
+    document.getElementById('tb-bans').addEventListener('click', async ev => {
+      const btn = ev.target.closest('button.unban');
+      if (!btn) return;
+      const ip = btn.dataset.ip, jail = btn.dataset.jail;
+      if (!confirm('Unban ' + ip + ' from ' + jail + '?')) return;
+      const msg = document.getElementById('unban-msg');
+      btn.disabled = true;
+      msg.textContent = 'unbanning ' + ip + '\u2026';
+      try {
+        const r = await fetch('api/unban', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'secure-zellij' },
+          body: JSON.stringify({ ip: ip, jail: jail }),
+        });
+        const res = await r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
+        msg.className = res.ok ? '' : 'ban-active';
+        msg.textContent = res.ok ? ip + ' unbanned' : 'unban failed: ' + res.error;
+      } catch (e) {
+        msg.className = 'ban-active';
+        msg.textContent = 'unban failed: ' + e;
+      }
+      refresh();
+    });
     refresh();
     setInterval(refresh, 10000);
   </script>
@@ -252,6 +306,22 @@ def init_db() -> None:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(connections)")}
         if "sso_user" not in cols:  # databases from before SSO support
             conn.execute("ALTER TABLE connections ADD COLUMN sso_user TEXT NOT NULL DEFAULT ''")
+        # fail2ban deletes a ban from its DB on unban, so the dashboard keeps its own record
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS unbans (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts          TEXT NOT NULL,
+                ip          TEXT NOT NULL,
+                jail        TEXT NOT NULL,
+                unbanned_by TEXT NOT NULL DEFAULT '',
+                ban_ts      TEXT NOT NULL DEFAULT '',
+                failures    INTEGER NOT NULL DEFAULT 0,
+                sso_user    TEXT NOT NULL DEFAULT '',
+                path        TEXT NOT NULL DEFAULT '',
+                status      TEXT NOT NULL DEFAULT '',
+                user_agent  TEXT NOT NULL DEFAULT ''
+            )
+        """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON connections(ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ip ON connections(ip)")
         conn.commit()
@@ -335,6 +405,8 @@ def get_bans(path: str, limit: int = 50) -> dict:
                 "status": p["status"],
                 "user_agent": p["user_agent"],
                 "active": permanent or timeofban + bantime > now,
+                "unbanned_by": "",
+                "unbanned_at": "",
                 "until": ""
                 if permanent
                 else datetime.fromtimestamp(timeofban + bantime, UTC).isoformat(),
@@ -342,6 +414,104 @@ def get_bans(path: str, limit: int = 50) -> dict:
         )
     result.update(available=True, active=active, last_24h=last_24h, recent=recent)
     return result
+
+
+def find_ban(path: str, jail: str, ip: str) -> dict | None:
+    """The newest ban fail2ban has for this jail and IP, in get_bans() shape."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+        try:
+            row = conn.execute(
+                "SELECT jail, ip, timeofban, bantime, data FROM bans"
+                " WHERE jail = ? AND ip = ? ORDER BY timeofban DESC LIMIT 1",
+                (jail, ip),
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    p = _build_ban_payload(row[0], row[1], row[2], row[3], row[4])
+    return {
+        "ts": p["timestamp"],
+        "failures": p["failures"],
+        "sso_user": p["sso_user"],
+        "path": p["path"],
+        "status": p["status"],
+        "user_agent": p["user_agent"],
+    }
+
+
+def record_unban(ip: str, jail: str, by: str, ban: dict | None, ts: str | None = None) -> None:
+    ban = ban or {}
+    with _db_lock, sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO unbans (ts, ip, jail, unbanned_by, ban_ts, failures, sso_user, path,"
+            " status, user_agent) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                ts or datetime.now(UTC).isoformat(),
+                ip,
+                jail,
+                by,
+                ban.get("ts", ""),
+                int(ban.get("failures") or 0),
+                ban.get("sso_user", ""),
+                ban.get("path", ""),
+                str(ban.get("status", "")),
+                ban.get("user_agent", ""),
+            ),
+        )
+        conn.commit()
+
+
+def _merge_unbans(bans: dict, limit: int = 50) -> None:
+    """Add unbans from stats.db to get_bans() output (fail2ban forgot them)."""
+    since = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+    with sqlite3.connect(DB_PATH, check_same_thread=False) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM unbans WHERE ban_ts >= ? OR ts >= ? ORDER BY ts DESC LIMIT ?",
+            (since, since, limit),
+        ).fetchall()
+    for r in rows:
+        bans["recent"].append(
+            {
+                "ts": r["ban_ts"] or r["ts"],
+                "ip": r["ip"],
+                "jail": r["jail"],
+                "failures": r["failures"],
+                "bantime": 0,
+                "sso_user": r["sso_user"],
+                "path": r["path"],
+                "status": r["status"],
+                "user_agent": r["user_agent"],
+                "active": False,
+                "until": "",
+                "unbanned_by": r["unbanned_by"],
+                "unbanned_at": r["ts"],
+            }
+        )
+        if r["ban_ts"] >= since:
+            bans["last_24h"] += 1
+    bans["recent"].sort(key=lambda b: b["ts"], reverse=True)
+    del bans["recent"][limit:]
+
+
+def unban_status() -> tuple[bool, str]:
+    """Whether the unban button is offered, and why not."""
+    if not UNBAN_ENABLED:
+        return False, "Unbanning from the dashboard is off (UNBAN_ENABLED=false)."
+    if not UNBAN_DIR or not os.path.isdir(UNBAN_DIR):
+        return False, "Unbanning needs the fail2ban-unban container (see docs/fail2ban.md)."
+    if not STATS_USERNAME and SSO_MODE == "off":
+        return (
+            False,
+            "Unbanning needs a login on this page: set STATS_USERNAME/STATS_PASSWORD or enable SSO.",
+        )
+    return True, ""
 
 
 def get_stats() -> dict:
@@ -392,10 +562,15 @@ def get_stats() -> dict:
             (ago_24h,),
         ).fetchall()
 
+    bans = get_bans(F2B_DB)
+    if bans["enabled"]:
+        _merge_unbans(bans)
+    bans["unban"], bans["unban_hint"] = unban_status()
+
     return {
         "generated_at": now.isoformat(),
         "sso_enabled": SSO_MODE != "off",
-        "bans": get_bans(F2B_DB),
+        "bans": bans,
         "summary": {
             "active_sessions": active,
             "connected_ips_1h": ips_1h,
@@ -477,7 +652,105 @@ def _make_app():
             return denied
         return JSONResponse(get_stats())
 
+    @app.post("/api/unban")
+    async def unban(request: Request):
+        denied = _auth(request)
+        if denied:
+            return denied
+        allowed, why = unban_status()
+        if not allowed:
+            return JSONResponse({"ok": False, "error": why}, status_code=403)
+        if not _same_origin(request.headers):
+            return JSONResponse(
+                {"ok": False, "error": "cross-site request refused"}, status_code=403
+            )
+        who = _request_identity(request.headers)
+        if not who:
+            return JSONResponse({"ok": False, "error": "no signed-in user"}, status_code=403)
+        try:
+            body = await request.json()
+            jail = str(body["jail"])
+            ip = str(ipaddress.ip_address(str(body["ip"])))
+        except ValueError, KeyError, TypeError:
+            return JSONResponse({"ok": False, "error": "need a jail and an IP"}, status_code=400)
+        if not _JAIL_RE.match(jail):
+            return JSONResponse({"ok": False, "error": "bad jail name"}, status_code=400)
+
+        ban = find_ban(F2B_DB, jail, ip)  # fail2ban deletes it on unban
+        result = await request_unban(jail, ip)
+        # Logical failures stay 200: a 4xx here would count towards a ban of the admin
+        if not result.get("ok"):
+            print(f"[alerter] Unban of {ip} by {who} failed: {result.get('error')}", flush=True)
+            return JSONResponse({"ok": False, "error": str(result.get("error", "failed"))})
+        record_unban(ip, jail, who, ban)
+        print(f"[alerter] Unban: {ip} in {jail} by {who}", flush=True)
+        payload = _build_unban_payload(jail, ip, who, ban)
+        threading.Thread(target=dispatch, args=(payload,), daemon=True).start()
+        return JSONResponse({"ok": True, "ip": ip, "jail": jail})
+
     return app
+
+
+def _same_origin(headers) -> bool:
+    """CSRF guard for the unban POST.
+
+    Browsers send basic-auth credentials and the SSO cookie along with
+    cross-site requests, so check that the request came from our own page: the
+    custom header and the JSON content type force a CORS preflight, which this
+    app never answers, and Origin/Sec-Fetch-Site must match when present.
+    """
+    if headers.get("x-requested-with") != "secure-zellij":
+        return False
+    if not headers.get("content-type", "").startswith("application/json"):
+        return False
+    if headers.get("sec-fetch-site", "same-origin") != "same-origin":
+        return False
+    origin = headers.get("origin")
+    if origin:
+        from urllib.parse import urlsplit
+
+        if urlsplit(origin).netloc != headers.get("host", ""):
+            return False
+    return True
+
+
+def _request_identity(headers) -> str:
+    """Who is unbanning: the SSO user Traefik vouched for, else the basic-auth user."""
+    sso = _header(
+        {f"request_{k}": v for k, v in headers.items()}, _SSO_USER_HEADERS.get(SSO_MODE, ())
+    )
+    if sso:
+        return sso
+    return STATS_USERNAME
+
+
+async def request_unban(jail: str, ip: str) -> dict:
+    """Hand the unban to the fail2ban-unban helper and wait for its answer."""
+    rid = secrets.token_hex(16)
+    req = os.path.join(UNBAN_DIR, f"{rid}.json")
+    res = os.path.join(UNBAN_DIR, f"{rid}.result")
+    tmp = os.path.join(UNBAN_DIR, f".{rid}.req")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"jail": jail, "ip": ip}, fh)
+    os.replace(tmp, req)
+    deadline = time.monotonic() + UNBAN_TIMEOUT
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.2)
+        try:
+            with open(res, encoding="utf-8") as fh:
+                result = json.load(fh)
+        except FileNotFoundError:
+            continue
+        except ValueError:
+            result = {"ok": False, "error": "unreadable answer from the unban helper"}
+        os.remove(res)
+        return result if isinstance(result, dict) else {"ok": False, "error": "bad answer"}
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(req)
+    return {
+        "ok": False,
+        "error": "the unban helper didn't answer, is the fail2ban-unban container running?",
+    }
 
 
 def _run_stats_server() -> None:
@@ -565,6 +838,16 @@ def _message(payload: dict, code: bool) -> str:
     bold = "*" if code else "**"
     fwd = f"Forwarded-For: {q(payload['x_forwarded_for'])}\n" if payload["x_forwarded_for"] else ""
     ua = q(payload["user_agent"][:100])
+    if payload.get("event") == "fail2ban_unban":
+        banned_user = f"Banned user: {q(payload['sso_user'])}\n" if payload["sso_user"] else ""
+        return (
+            f"\u2705 {bold}IP unbanned{bold}\n"
+            f"By: {q(payload['unbanned_by'])}\n"
+            f"IP: {q(payload['client_ip'])}\n"
+            f"Jail: {q(payload['jail'])}\n"
+            f"{banned_user}"
+            f"Time: {q(payload['timestamp'])}"
+        )
     if payload.get("event") == "fail2ban_ban":
         return (
             f"\U0001f6ab {bold}IP banned by fail2ban{bold}\n"
@@ -789,6 +1072,27 @@ def _build_ban_payload(jail: str, ip: str, timeofban: int, bantime: int, data: s
         failures=failures,
         sso_user=", ".join(users),
         sso_email=", ".join(emails),
+    )
+    return payload
+
+
+def _build_unban_payload(jail: str, ip: str, by: str, ban: dict | None) -> dict:
+    ban = ban or {}
+    payload = _build_payload({})
+    payload.update(
+        event="fail2ban_unban",
+        timestamp=datetime.now(UTC).isoformat(),
+        client_ip=ip,
+        user_agent=ban.get("user_agent", ""),
+        path=ban.get("path", ""),
+        status=ban.get("status", ""),
+        service="",
+        jail=jail,
+        bantime=0,
+        failures=ban.get("failures", 0),
+        sso_user=ban.get("sso_user", ""),
+        sso_email="",
+        unbanned_by=by,
     )
     return payload
 

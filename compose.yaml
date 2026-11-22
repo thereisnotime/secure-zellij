@@ -81,11 +81,36 @@ services:
       - ./fail2ban/filter.d:/data/filter.d:ro
       - ./fail2ban/jail.d:/data/jail.d:ro
       - fail2ban-data:/data/db
+      # control socket, shared with fail2ban-unban only
+      - fail2ban-run:/var/run/fail2ban
     environment:
       - TZ=${TZ:-UTC}
       - F2B_LOG_LEVEL=${F2B_LOG_LEVEL:-INFO}
     depends_on:
       - traefik
+
+  # Carries out unban requests from the stats dashboard (docs/fail2ban.md).
+  # It is the only container besides fail2ban that sees the control socket, and
+  # all it runs is `fail2ban-client set <jail> unbanip <ip>`. No network.
+  fail2ban-unban:
+    image: docker.io/crazymax/fail2ban:1.1.1@sha256:34a1e5cc4ac7bb2527b806bcf1c3aa7f747db51930540f648521ba927a58c0bc
+    container_name: secure-zellij-fail2ban-unban
+    restart: unless-stopped
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    entrypoint: ["python3", "-I", "/unban-helper.py"]
+    volumes:
+      - ./fail2ban/unban-helper.py:/unban-helper.py:ro
+      - fail2ban-run:/var/run/fail2ban
+      - unban-requests:/requests
+    environment:
+      - UNBAN_JAILS=traefik-zellij
+    depends_on:
+      - fail2ban
 
   alerter:
     build:
@@ -100,6 +125,8 @@ services:
       - stats-data:/data
       # fail2ban's ban database, read-only, for ban alerts
       - fail2ban-data:/fail2ban:ro
+      # drop box for unban requests, picked up by fail2ban-unban
+      - unban-requests:/unban
     environment:
       - ACCESS_LOG=/var/log/traefik/access.log
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
@@ -117,6 +144,8 @@ services:
       - SSO_MODE=${SSO_MODE:-off}
       - BAN_ALERTS=${BAN_ALERTS:-true}
       - F2B_DB=/fail2ban/fail2ban.sqlite3
+      - UNBAN_ENABLED=${UNBAN_ENABLED:-true}
+      - UNBAN_DIR=/unban
     networks:
       - proxy
     depends_on:
@@ -127,6 +156,17 @@ volumes:
   letsencrypt:
   fail2ban-data:
   stats-data:
+  # tmpfs: nothing in these outlives the stack
+  fail2ban-run:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1m,mode=0700
+  unban-requests:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1m,mode=0700
 
 networks:
   proxy:

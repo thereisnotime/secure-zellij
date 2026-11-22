@@ -19,7 +19,7 @@ jobs:
           docker compose -f compose.yaml --profile sso config --quiet
 
       - name: Shellcheck
-        run: shellcheck traefik/entrypoint.sh tests/sso-e2e.sh
+        run: shellcheck traefik/entrypoint.sh tests/sso-e2e.sh tests/unban-e2e.sh
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.4.0
@@ -35,11 +35,11 @@ jobs:
 
       - name: Lint alerter (ruff check)
         working-directory: alerter
-        run: uv run ruff check .
+        run: uv run ruff check . ../fail2ban
 
       - name: Format check alerter (ruff format)
         working-directory: alerter
-        run: uv run ruff format --check .
+        run: uv run ruff format --check . ../fail2ban
 
       - name: Test alerter (pytest)
         working-directory: alerter
@@ -62,3 +62,16 @@ jobs:
         run: |
           podman --version
           tests/sso-e2e.sh
+
+  unban-e2e:
+    name: Unban end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run unban e2e (real fail2ban, podman)
+        env:
+          COMPOSE: docker compose
+        run: |
+          podman --version
+          tests/unban-e2e.sh

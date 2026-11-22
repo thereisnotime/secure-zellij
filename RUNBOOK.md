@@ -69,7 +69,7 @@ just web-stop && just web-start
 ```bash
 just fail2ban-status             # jail stats: failures, bans, file list
 just fail2ban-banned             # list currently banned IPs with ban times
-just fail2ban-unban 1.2.3.4      # unban a specific IP
+just fail2ban-unban 1.2.3.4      # unban a specific IP (or use the button on /stats)
 ```
 
 Manually ban an IP (e.g. for testing):

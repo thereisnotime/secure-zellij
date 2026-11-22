@@ -609,3 +609,220 @@ def test_stats_api_includes_bans(tmp_path, monkeypatch):
 def test_dashboard_escapes_quotes():
     # client-controlled values (user agent, SSO user) go into title="..." attributes
     assert ".replace(/\"/g,'&quot;')" in a._HTML
+
+
+# ── unban ─────────────────────────────────────────────────────────────────────
+
+import importlib.util  # noqa: E402
+import pathlib  # noqa: E402
+
+_HELPER_PATH = pathlib.Path(__file__).resolve().parents[2] / "fail2ban" / "unban-helper.py"
+_spec = importlib.util.spec_from_file_location("unban_helper", _HELPER_PATH)
+helper = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(helper)
+
+_GOOD_HEADERS = {
+    "x-requested-with": "secure-zellij",
+    "content-type": "application/json",
+    "host": "zellij.example.com",
+    "origin": "https://zellij.example.com",
+    "sec-fetch-site": "same-origin",
+}
+
+
+def test_same_origin_accepts_own_page():
+    assert a._same_origin(_GOOD_HEADERS)
+    # older clients without fetch metadata / Origin
+    assert a._same_origin({"x-requested-with": "secure-zellij", "content-type": "application/json"})
+
+
+def test_same_origin_refuses_cross_site():
+    for change in (
+        {"x-requested-with": ""},
+        {"content-type": "text/plain"},
+        {"sec-fetch-site": "cross-site"},
+        {"origin": "https://evil.example"},
+    ):
+        assert not a._same_origin({**_GOOD_HEADERS, **change}), change
+
+
+def test_request_identity(monkeypatch):
+    monkeypatch.setattr(a, "STATS_USERNAME", "admin")
+    monkeypatch.setattr(a, "SSO_MODE", "off")
+    # with SSO off an identity header is just something the client sent
+    assert a._request_identity({"x-auth-request-preferred-username": "mallory"}) == "admin"
+    monkeypatch.setattr(a, "SSO_MODE", "oauth2-proxy")
+    assert a._request_identity({"x-auth-request-preferred-username": "alice"}) == "alice"
+    monkeypatch.setattr(a, "STATS_USERNAME", "")
+    assert a._request_identity({}) == ""
+
+
+def test_unban_status(tmp_path, monkeypatch):
+    monkeypatch.setattr(a, "UNBAN_ENABLED", True)
+    monkeypatch.setattr(a, "UNBAN_DIR", str(tmp_path))
+    monkeypatch.setattr(a, "STATS_USERNAME", "")
+    monkeypatch.setattr(a, "SSO_MODE", "off")
+    ok, why = a.unban_status()
+    assert not ok and "STATS_USERNAME" in why  # no login on the page, no unban
+    monkeypatch.setattr(a, "SSO_MODE", "forward-auth")
+    assert a.unban_status() == (True, "")
+    monkeypatch.setattr(a, "UNBAN_DIR", str(tmp_path / "missing"))
+    assert "fail2ban-unban" in a.unban_status()[1]
+    monkeypatch.setattr(a, "UNBAN_ENABLED", False)
+    assert "UNBAN_ENABLED=false" in a.unban_status()[1]
+
+
+class _Run:
+    def __init__(self, rc=0, out="1\n", err=""):
+        self.returncode, self.stdout, self.stderr = rc, out, err
+
+
+def test_helper_runs_only_unbanip(mocker):
+    run = mocker.patch.object(helper.subprocess, "run", return_value=_Run())
+    assert helper.handle({"jail": "traefik-zellij", "ip": "203.0.113.9"}) == {
+        "ok": True,
+        "jail": "traefik-zellij",
+        "ip": "203.0.113.9",
+    }
+    assert run.call_args[0][0] == [
+        "fail2ban-client",
+        "set",
+        "traefik-zellij",
+        "unbanip",
+        "203.0.113.9",
+    ]
+
+
+def test_helper_rejects_bad_input(mocker):
+    run = mocker.patch.object(helper.subprocess, "run", return_value=_Run())
+    assert not helper.handle({"jail": "sshd", "ip": "203.0.113.9"})["ok"]
+    assert not helper.handle({"jail": "traefik-zellij", "ip": "1.2.3.4; reboot"})["ok"]
+    assert not helper.handle({"jail": "traefik-zellij", "ip": "--help"})["ok"]
+    run.assert_not_called()
+
+
+def test_helper_reports_not_banned_and_errors(mocker):
+    mocker.patch.object(helper.subprocess, "run", return_value=_Run(out="0\n"))
+    assert "isn't banned" in helper.handle({"jail": "traefik-zellij", "ip": "203.0.113.9"})["error"]
+    mocker.patch.object(helper.subprocess, "run", return_value=_Run(rc=255, err="no socket"))
+    assert helper.handle({"jail": "traefik-zellij", "ip": "203.0.113.9"})["error"] == "no socket"
+
+
+def test_helper_sweep_answers_and_drops_junk(tmp_path, mocker, monkeypatch):
+    monkeypatch.setattr(helper, "REQUEST_DIR", str(tmp_path))
+    mocker.patch.object(helper.subprocess, "run", return_value=_Run())
+    rid = "a" * 32
+    (tmp_path / f"{rid}.json").write_text('{"jail": "traefik-zellij", "ip": "203.0.113.9"}')
+    (tmp_path / f"{'b' * 32}.json").write_text("not json")
+    (tmp_path / "other.txt").write_text("left alone")
+    helper.sweep()
+    assert json.loads((tmp_path / f"{rid}.result").read_text())["ok"] is True
+    assert sorted(p.name for p in tmp_path.iterdir()) == [f"{rid}.result", "other.txt"]
+
+
+def _unban_client(tmp_path, monkeypatch, mocker, helper_result=None):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(a, "DB_PATH", str(tmp_path / "stats.db"))
+    monkeypatch.setattr(a, "UNBAN_DIR", str(tmp_path))
+    monkeypatch.setattr(a, "UNBAN_ENABLED", True)
+    monkeypatch.setattr(a, "STATS_USERNAME", "admin")
+    monkeypatch.setattr(a, "STATS_PASSWORD", "pw")
+    monkeypatch.setattr(a, "SSO_MODE", "off")
+    monkeypatch.setattr(a, "UNBAN_TIMEOUT", 0.5)
+    db = str(tmp_path / "fail2ban.sqlite3")
+    _make_f2b_db(db)
+    _add_ban(db, "203.0.113.9", int(a.time.time()) - 30, _ban_data(_ban_line("alice")))
+    monkeypatch.setattr(a, "F2B_DB", db)
+    a.init_db()
+
+    async def fake_request_unban(jail, ip):
+        return helper_result or {"ok": True, "jail": jail, "ip": ip}
+
+    mocker.patch.object(a, "request_unban", side_effect=fake_request_unban)
+    dispatched = mocker.patch.object(a, "dispatch")
+    return TestClient(a._make_app()), dispatched
+
+
+def _post(client, body, headers=None, auth=("admin", "pw")):
+    h = {"X-Requested-With": "secure-zellij", **(headers or {})}
+    return client.post("/api/unban", json=body, headers=h, auth=auth)
+
+
+def test_unban_endpoint_records_and_alerts(tmp_path, monkeypatch, mocker):
+    client, dispatched = _unban_client(tmp_path, monkeypatch, mocker)
+    # SSO and basic auth both on; no SSO header sent here, so the basic-auth user acts
+    monkeypatch.setattr(a, "SSO_MODE", "oauth2-proxy")
+    r = _post(client, {"ip": "203.0.113.9", "jail": "traefik-zellij"})
+    assert r.json() == {"ok": True, "ip": "203.0.113.9", "jail": "traefik-zellij"}
+    for _ in range(50):  # alert goes out on a background thread
+        if dispatched.called:
+            break
+        a.time.sleep(0.01)
+    payload = dispatched.call_args[0][0]
+    assert payload["event"] == "fail2ban_unban"
+    assert payload["unbanned_by"] == "admin"
+    assert payload["sso_user"] == "alice"
+    assert "By: `admin`" in a._message(payload, code=True)
+    # fail2ban dropped the ban; the dashboard still lists it via stats.db
+    import sqlite3
+
+    with sqlite3.connect(a.F2B_DB) as conn:
+        conn.execute("DELETE FROM bans")
+    rows = a.get_stats()["bans"]["recent"]
+    assert [(b["ip"], b["unbanned_by"], b["sso_user"], b["active"]) for b in rows] == [
+        ("203.0.113.9", "admin", "alice", False)
+    ]
+
+
+def test_unban_endpoint_guards(tmp_path, monkeypatch, mocker):
+    client, dispatched = _unban_client(tmp_path, monkeypatch, mocker)
+    body = {"ip": "203.0.113.9", "jail": "traefik-zellij"}
+    assert _post(client, body, auth=None).status_code == 401
+    assert _post(client, body, auth=("admin", "nope")).status_code == 401
+    assert _post(client, body, headers={"X-Requested-With": ""}).status_code == 403
+    assert _post(client, body, headers={"Origin": "https://evil.example"}).status_code == 403
+    assert _post(client, {"ip": "nope", "jail": "traefik-zellij"}).status_code == 400
+    assert _post(client, {"ip": "203.0.113.9", "jail": "../x"}).status_code == 400
+    monkeypatch.setattr(a, "STATS_USERNAME", "")
+    r = _post(client, body, auth=None)  # no login configured at all
+    assert r.status_code == 403
+    assert "STATS_USERNAME" in r.json()["error"]
+    dispatched.assert_not_called()
+
+
+def test_unban_endpoint_helper_failure_is_not_4xx(tmp_path, monkeypatch, mocker):
+    client, dispatched = _unban_client(
+        tmp_path, monkeypatch, mocker, {"ok": False, "error": "203.0.113.9 isn't banned"}
+    )
+    r = _post(client, {"ip": "203.0.113.9", "jail": "traefik-zellij"})
+    assert r.status_code == 200  # a 4xx would count towards banning the admin
+    assert r.json() == {"ok": False, "error": "203.0.113.9 isn't banned"}
+    dispatched.assert_not_called()
+
+
+def test_request_unban_round_trip_with_helper(tmp_path, monkeypatch, mocker):
+    import asyncio
+
+    monkeypatch.setattr(a, "UNBAN_DIR", str(tmp_path))
+    monkeypatch.setattr(helper, "REQUEST_DIR", str(tmp_path))
+    mocker.patch.object(helper.subprocess, "run", return_value=_Run())
+
+    async def go():
+        task = asyncio.create_task(a.request_unban("traefik-zellij", "203.0.113.9"))
+        await asyncio.sleep(0.05)
+        helper.sweep()
+        return await task
+
+    assert asyncio.run(go())["ok"] is True
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_request_unban_times_out(tmp_path, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(a, "UNBAN_DIR", str(tmp_path))
+    monkeypatch.setattr(a, "UNBAN_TIMEOUT", 0.3)
+    res = asyncio.run(a.request_unban("traefik-zellij", "203.0.113.9"))
+    assert "fail2ban-unban container" in res["error"]
+    assert list(tmp_path.iterdir()) == []  # request withdrawn

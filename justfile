@@ -163,13 +163,13 @@ revoke-all:
 
 # ── Dev ───────────────────────────────────────────────────────────────────────
 
-# Lint and format-check alerter Python code
+# Lint and format-check the Python code (alerter, unban helper)
 lint:
-    cd alerter && uv run ruff check . && uv run ruff format --check .
+    cd alerter && uv run ruff check . ../fail2ban && uv run ruff format --check . ../fail2ban
 
 # Format alerter Python code
 format:
-    cd alerter && uv run ruff format .
+    cd alerter && uv run ruff format . ../fail2ban
 
 # Run alerter unit tests
 test:
@@ -186,6 +186,10 @@ validate:
 # End-to-end SSO test with a mock IdP in throwaway containers (doesn't touch the stack)
 test-sso:
     tests/sso-e2e.sh
+
+# End-to-end test of the dashboard unban button (real fail2ban, throwaway containers)
+test-unban:
+    tests/unban-e2e.sh
 
 # Generate a cookie secret for SSO_COOKIE_SECRET (oauth2-proxy)
 sso-cookie-secret:

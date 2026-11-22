@@ -127,7 +127,8 @@ Available placeholders:
 | `{service}` | `zellij` |
 | `{sso_user}` | `alice` (empty without SSO) |
 | `{sso_email}` | `alice@example.com` (empty without SSO) |
-| `{jail}`, `{bantime}`, `{failures}` | ban alerts only, see [Ban alerts](#ban-alerts) |
+| `{jail}`, `{bantime}`, `{failures}` | ban and unban alerts only, see [Ban alerts](#ban-alerts) |
+| `{unbanned_by}` | unban alerts only |
 
 If the template is invalid JSON after substitution, or references an unknown placeholder, the alerter logs a warning and falls back to the default payload.
 
@@ -179,7 +180,22 @@ The alerter log prints `[alerter] Ban: 203.0.113.9 (alice) in traefik-zellij` fo
 
 ### On the stats dashboard
 
-`/stats` shows a **Banned Now** and a **Bans (24h)** card plus a **fail2ban Bans** table: time, SSO user, IP, jail, failures, the last request that counted, and whether the ban is still active (and until when). It reads fail2ban's database directly, so it lists every ban fail2ban still keeps (`dbpurgeage`, 1 day by default), including ones from before the alerter started. `BAN_ALERTS=false` only stops the notifications; the dashboard section stays.
+`/stats` shows a **Banned Now** and a **Bans (24h)** card plus a **fail2ban Bans** table: time, SSO user, IP, jail, failures, the last request that counted, and whether the ban is still active (and until when). It reads fail2ban's database directly, so it lists every ban fail2ban still keeps (`dbpurgeage`, 1 day by default), including ones from before the alerter started. `BAN_ALERTS=false` only stops the notifications; the dashboard section stays. Active bans have an **unban** button, see [Fail2ban: unbanning from the dashboard](fail2ban.md#unbanning-from-the-dashboard).
+
+### Unban alerts
+
+An unban from the dashboard is announced on the same channels, so everyone watching sees who lifted it:
+
+```
+✅ IP unbanned
+By: `admin`
+IP: `203.0.113.9`
+Jail: `traefik-zellij`
+Banned user: `alice`
+Time: `2026-11-22T20:19:44+00:00`
+```
+
+Webhooks get `event: "fail2ban_unban"` with `unbanned_by` added; `sso_user` is the user from the original ban. Unbans with `just fail2ban-unban` bypass the alerter and aren't announced.
 
 ## SSO user
 

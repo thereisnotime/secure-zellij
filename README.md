@@ -23,7 +23,7 @@ A podman compose stack that puts [Traefik](https://traefik.io) in front of the [
 - **TLS out of the box** — self-signed by default, one config change to switch to Let's Encrypt
 - **Real IP forwarding** — `X-Real-IP` / `X-Forwarded-For` correctly extracted and passed through
 - **Connection alerts** — fires on WebSocket connections, not page loads, so only actual terminal sessions trigger notifications
-- **Ban alerts** — a notification whenever fail2ban bans an IP, with the SSO user it was signed in as; active and recent bans are listed on the stats dashboard
+- **Ban alerts** — a notification whenever fail2ban bans an IP, with the SSO user it was signed in as; active and recent bans are listed on the stats dashboard, with an unban button
 - **Telegram, Discord + generic webhooks** — structured JSON payload with IP, user agent, path, and timestamp
 - **Security headers** — HSTS, CSP, XSS protection, clickjacking protection
 - **Optional SSO** — Authelia, Keycloak, Authentik (or any OIDC IdP) in front of zellij via oauth2-proxy or native forward-auth
@@ -167,6 +167,8 @@ Copy `.env.example` to `.env` and edit:
 | `TELEGRAM_CHAT_ID` | | — | Chat or channel ID for alerts |
 | `WEBHOOK_URLS` | | — | Comma-separated webhook URLs |
 | `BAN_ALERTS` | | `true` | Also alert when fail2ban bans an IP (see [Alerting](docs/alerting.md#ban-alerts)) |
+| `STATS_USERNAME` / `STATS_PASSWORD` | | — | Basic auth for the `/stats` dashboard |
+| `UNBAN_ENABLED` | | `true` | Unban button on the dashboard; needs a login on the page (basic auth or SSO), see [Fail2ban](docs/fail2ban.md#unbanning-from-the-dashboard) |
 | `WEBHOOK_BODY_TEMPLATE` | | — | JSON template for webhook body (see [Alerting](docs/alerting.md)) |
 | `SSO_MODE` | | `off` | `oauth2-proxy` or `forward-auth` to put an IdP login in front (see [SSO](docs/sso.md)) |
 
@@ -302,8 +304,13 @@ just test-sso       # SSO end-to-end test with a mock IdP
 │       ├── routers.yml         # routing rules + backend (host:8082)
 │       ├── middlewares.yml     # security headers, real-IP extraction
 │       └── tls.yml             # TLS options (min version, ciphers)
+├── fail2ban/
+│   ├── filter.d/               # 4xx filter for the Traefik access log
+│   ├── jail.d/                 # ban thresholds and action
+│   └── unban-helper.py         # carries out dashboard unbans (fail2ban-unban)
 ├── tests/
-│   └── sso-e2e.sh              # SSO end-to-end test (mock IdP)
+│   ├── sso-e2e.sh              # SSO end-to-end test (mock IdP)
+│   └── unban-e2e.sh            # unban button end-to-end test (real fail2ban)
 ├── alerter/
 │   ├── alerter.py              # log tailer + alert dispatcher
 │   ├── pyproject.toml          # dependencies + ruff config
