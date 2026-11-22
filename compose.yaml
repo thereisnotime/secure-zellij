@@ -1,6 +1,6 @@
 services:
   traefik:
-    image: traefik:v3.7.11
+    image: traefik:v3.7.19
     container_name: secure-zellij-traefik
     restart: unless-stopped
     network_mode: host
@@ -24,7 +24,7 @@ services:
       retries: 3
 
   fail2ban:
-    image: crazymax/fail2ban@sha256:a1476ec3587dd7c6756d8cdb448fb0a262c242042d8a71557da6b5aa7aecd911
+    image: crazymax/fail2ban:1.1.1@sha256:34a1e5cc4ac7bb2527b806bcf1c3aa7f747db51930540f648521ba927a58c0bc
     container_name: secure-zellij-fail2ban
     restart: unless-stopped
     network_mode: host

@@ -1,13 +1,38 @@
 # Alerting
 
-The alerter sidecar tails Traefik's JSON access log and fires notifications whenever a WebSocket upgrade (HTTP 101) is detected — i.e. when someone establishes an actual terminal session, not just loads the page.
+The alerter sidecar tails Traefik's JSON access log and fires notifications whenever a WebSocket connection is detected, i.e. when someone establishes an actual terminal session, not just loads the page.
 
 ## How it works
 
 1. Traefik writes JSON access logs to a shared volume (`traefik-logs`)
 2. The alerter container reads from that volume, tailing the log file
-3. On each new line it checks `DownstreamStatus == 101`
-4. If matched, it extracts client IP, path, user agent, and timestamp and dispatches to all configured destinations
+3. On each new line it checks `DownstreamStatus == ALERT_ON_STATUS` (default `0`: Traefik logs hijacked WebSocket connections with status 0, and writes the entry when the connection closes)
+4. If matched and the client IP is outside its cooldown window, it extracts client IP, path, user agent, and timestamp and dispatches to all configured destinations
+
+```mermaid
+flowchart TD
+    log[("📜 access.log line")] --> parse{"🧩 valid JSON?"}
+    parse -- "❌ no" --> skip(["🗑️ ignore"])
+    parse -- "✅ yes" --> ws{"🔌 status 0 and<br/>session path?"}
+    ws -- "✅ yes" --> store[("🗄️ store in stats.db")]
+    ws -- "❌ no" --> match
+    store --> match{"🎯 status ==<br/>ALERT_ON_STATUS?"}
+    match -- "❌ no" --> skip
+    match -- "✅ yes" --> cool{"⏱️ IP alerted within<br/>cooldown?"}
+    cool -- "✅ yes" --> quiet(["🔇 suppress duplicate"])
+    cool -- "❌ no" --> send["🚨 dispatch alert"]
+    send --> tg["✈️ Telegram"] & dc["🎮 Discord"] & wh["🪝 Webhooks"]
+
+    classDef store fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#1e293b
+    classDef decision fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#3b0764
+    classDef drop fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
+    classDef alert fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f
+
+    class log,store store
+    class parse,ws,match,cool decision
+    class skip,quiet drop
+    class send,tg,dc,wh alert
+```
 
 ## Telegram
 
@@ -70,7 +95,7 @@ Each URL receives a POST with this JSON body:
   "x_forwarded_for": "",
   "user_agent": "Mozilla/5.0 ...",
   "path": "/my-session",
-  "status": 101,
+  "status": 0,
   "service": "zellij"
 }
 ```
@@ -93,7 +118,7 @@ Available placeholders:
 | `{x_forwarded_for}` | `1.2.3.4, 10.0.0.1` |
 | `{user_agent}` | `Mozilla/5.0 ...` |
 | `{path}` | `/my-session` |
-| `{status}` | `101` |
+| `{status}` | `0` |
 | `{service}` | `zellij` |
 
 If the template is invalid JSON after substitution, or references an unknown placeholder, the alerter logs a warning and falls back to the default payload.
@@ -118,7 +143,7 @@ All configured channels (Telegram, Discord, generic webhooks) fire simultaneousl
 
 ## Changing the trigger condition
 
-By default alerts fire on HTTP 101 (WebSocket upgrade). Change via `.env`:
+By default alerts fire on `DownstreamStatus` 0, which is how Traefik logs WebSocket connections. Change via `.env`:
 
 ```env
 ALERT_ON_STATUS=200   # alert on every successful page load instead

@@ -8,8 +8,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/thereisnotime/secure-zellij)](https://github.com/thereisnotime/secure-zellij/commits/main)
 [![Issues](https://img.shields.io/github/issues/thereisnotime/secure-zellij)](https://github.com/thereisnotime/secure-zellij/issues)
-[![Traefik](https://img.shields.io/badge/Traefik-v3.6-blue?logo=traefikproxy&logoColor=white)](https://traefik.io)
-[![Python](https://img.shields.io/badge/Python-3.14-blue?logo=python&logoColor=white)](https://python.org)
+[![Traefik](https://img.shields.io/badge/Traefik-v3.7-blue?logo=traefikproxy&logoColor=white)](https://traefik.io)
+[![Python](https://img.shields.io/badge/Python-3.15-blue?logo=python&logoColor=white)](https://python.org)
 [![Podman](https://img.shields.io/badge/Podman-compose-892CA0?logo=podman&logoColor=white)](https://podman.io)
 
 </div>
@@ -22,27 +22,101 @@ A podman compose stack that puts [Traefik](https://traefik.io) in front of the [
 
 - **TLS out of the box** — self-signed by default, one config change to switch to Let's Encrypt
 - **Real IP forwarding** — `X-Real-IP` / `X-Forwarded-For` correctly extracted and passed through
-- **Connection alerts** — fires on HTTP 101 (WebSocket upgrade), not just page loads — meaning only actual terminal sessions trigger notifications
-- **Telegram + generic webhooks** — structured JSON payload with IP, user agent, path, and timestamp
+- **Connection alerts** — fires on WebSocket connections, not page loads, so only actual terminal sessions trigger notifications
+- **Telegram, Discord + generic webhooks** — structured JSON payload with IP, user agent, path, and timestamp
 - **Security headers** — HSTS, CSP, XSS protection, clickjacking protection
 - **Strict TLS** — TLS 1.2 minimum, modern cipher suites, SNI strict mode
 
 ## Architecture
 
-```
-                    ┌─────────────────────────────────────┐
-                    │         podman compose               │
-                    │                                      │
-Browser ──HTTPS──▶  │  Traefik  ──HTTP──▶  host:8082      │
-                    │     │            (zellij web)        │
-                    │     │ access.log (JSON)              │
-                    │     ▼                                │
-                    │  Alerter ──▶ Telegram                │
-                    │          └──▶ Webhooks               │
-                    └─────────────────────────────────────┘
+```mermaid
+flowchart LR
+    user(["🧑‍💻 Browser"])
+
+    subgraph host["🖥️ Host"]
+        direction LR
+        zellij["🪟 zellij web<br/>127.0.0.1:8082"]
+
+        subgraph stack["📦 podman compose"]
+            direction TB
+            traefik["🚦 Traefik<br/>:8080 / :8443"]
+            logs[("📜 access.log<br/>JSON")]
+            f2b["🛡️ fail2ban"]
+            alerter["🔔 Alerter<br/>+ 📊 stats :8083"]
+            db[("🗄️ stats.db")]
+        end
+    end
+
+    subgraph notify["📣 Notifications"]
+        direction TB
+        tg["✈️ Telegram"]
+        dc["🎮 Discord"]
+        wh["🪝 Webhooks"]
+    end
+
+    user == "🔒 HTTPS / WSS" ==> traefik
+    traefik -- "🔌 HTTP + WS" --> zellij
+    traefik -- "📊 /stats" --> alerter
+    traefik -. "✍️ writes" .-> logs
+    logs -. "👀 tails" .-> f2b
+    logs -. "👀 tails" .-> alerter
+    f2b -- "⛔ iptables ban" --> traefik
+    alerter --> db
+    alerter --> tg & dc & wh
+
+    classDef client fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e
+    classDef proxy fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#3b0764
+    classDef app fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d
+    classDef guard fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d
+    classDef alert fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f
+    classDef store fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#1e293b
+
+    class user client
+    class traefik proxy
+    class zellij app
+    class f2b guard
+    class alerter,tg,dc,wh alert
+    class logs,db store
+
+    style host fill:transparent,stroke:#64748b,stroke-width:2px,stroke-dasharray:6 4
+    style stack fill:transparent,stroke:#892ca0,stroke-width:2px
+    style notify fill:transparent,stroke:#d97706,stroke-width:2px,stroke-dasharray:6 4
 ```
 
-Zellij runs on the **host** (not containerised). Traefik proxies to it via `host.containers.internal:8082`.
+Zellij runs on the **host** (not containerised). Traefik and fail2ban use host networking, so Traefik proxies straight to `127.0.0.1:8082`; the alerter publishes its stats dashboard on `127.0.0.1:8083`.
+
+### Connection flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 🧑‍💻 Browser
+    participant T as 🚦 Traefik
+    participant Z as 🪟 zellij web
+    participant L as 📜 access.log
+    participant A as 🔔 Alerter
+    participant N as 📣 Telegram / Discord / Webhooks
+
+    rect rgba(124, 58, 237, 0.12)
+        Note over U,T: 🔒 TLS 1.2+, security headers, rate limit
+        U->>T: GET https://DOMAIN/my-session
+        T->>Z: proxy request (X-Real-IP set)
+        Z-->>U: 🔑 login page, paste token
+    end
+
+    rect rgba(22, 163, 74, 0.12)
+        U->>T: WebSocket upgrade
+        T->>Z: hijack connection
+        Z-->>U: 🖥️ live terminal session
+    end
+
+    rect rgba(217, 119, 6, 0.12)
+        T->>L: ✍️ JSON entry (DownstreamStatus = 0)
+        L-->>A: 👀 tail picks up the line
+        A->>A: 🗄️ store event, ⏱️ per-IP cooldown
+        A->>N: 🚨 connection alert
+    end
+```
 
 ## Requirements
 
@@ -116,7 +190,7 @@ No changes needed. Traefik auto-generates a self-signed cert. The browser will s
 
 ## Alerting
 
-Alerts fire on every successful WebSocket upgrade (HTTP 101) — the moment a terminal session is established.
+Alerts fire on every WebSocket connection, i.e. when a terminal session is established. Traefik logs hijacked WebSocket connections with `DownstreamStatus: 0`, which is what `ALERT_ON_STATUS` matches by default.
 
 ### Telegram
 
@@ -152,7 +226,7 @@ Payload sent to each URL via `POST`:
   "x_forwarded_for": "",
   "user_agent": "Mozilla/5.0 ...",
   "path": "/my-session",
-  "status": 101,
+  "status": 0,
   "service": "zellij"
 }
 ```
