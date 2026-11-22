@@ -1,7 +1,7 @@
 services:
   # Owns the network namespace Traefik and fail2ban share, and the published
   # ports. fail2ban bans with nftables inside this namespace, so a banned IP is
-  # dropped before it reaches Traefik, no root or host firewall needed
+  # rejected before it reaches Traefik, no root or host firewall needed
   # (docs/fail2ban.md). It does nothing else and never needs restarting, so the
   # namespace outlives Traefik restarts.
   #

@@ -24,7 +24,7 @@ Two things to check first:
   firewall, so the iptables action never applied: bans were recorded and alerted
   while the client kept connecting. An `edge` container now owns a pasta network
   namespace and the published ports. Traefik and fail2ban join it, and fail2ban
-  drops banned IPs with nftables there.
+  blocks banned IPs with nftables there.
 - The access log no longer stores `Cookie`, `Authorization` and
   `Proxy-Authorization` headers.
 - Headers that alias identity headers (e.g. `X_Auth_Request_User`) are dropped.
@@ -59,6 +59,13 @@ Two things to check first:
 
 ### Fixed
 
+- Every alerter restart replayed the access log into `stats.db` again, so the
+  dashboard's connection counts grew with each restart or upgrade. Existing
+  duplicates are removed on the next start.
+- The startup check of `WEBHOOK_BODY_TEMPLATE` warned about templates using ban
+  or unban fields (`jail`, `bantime`, `failures`, `unbanned_by`).
+- Template examples used single braces. Templates go through `str.format`, so
+  JSON braces must be doubled: `{{"text": "{client_ip}"}}`.
 - The first alert after a host boot was suppressed by the cooldown.
 - `just up` after a pull kept the old alerter image. `just upgrade` rebuilds it.
 - podman-compose dropped the alerter's healthcheck (it was in the Dockerfile). It

@@ -36,7 +36,7 @@ hosts in enforcing mode.
 
 **🛡️ Protection**
 - Per-client rate limit in Traefik
-- fail2ban bans clients that rack up failed logins. The bans drop packets with nftables in the stack's own network namespace ([fail2ban](docs/fail2ban.md))
+- fail2ban bans clients that rack up failed logins. The bans block the client with nftables in the stack's own network namespace ([fail2ban](docs/fail2ban.md))
 - Real client IPs end to end; a client-supplied `X-Real-Ip` is stripped
 - Unban from the dashboard through a helper container with no network that can only run `unbanip`
 
@@ -56,7 +56,7 @@ Layers a request passes through, from the internet inwards:
 
 | Layer | What it does | Docs |
 |---|---|---|
-| 🧱 **edge namespace** | Owns the published ports. fail2ban's nftables rules drop banned IPs here, before Traefik sees a byte. | [fail2ban](docs/fail2ban.md#where-the-ban-happens) |
+| 🧱 **edge namespace** | Owns the published ports. fail2ban's nftables rules reject banned IPs here, before Traefik sees a byte. | [fail2ban](docs/fail2ban.md#where-the-ban-happens) |
 | 🔒 **TLS** | TLS 1.2+ only, HTTP redirects to HTTPS, HSTS. | [TLS](docs/tls.md) |
 | 🚦 **Traefik** | Rate limit per client, security headers, strips spoofable forwarding headers, access log with cookies and credentials redacted. | [configuration](docs/configuration.md#files-you-might-edit) |
 | 🏛️ **SSO** (optional) | Your IdP's login and group check before any request reaches zellij or `/stats`. | [SSO](docs/sso.md) |
@@ -182,7 +182,7 @@ sequenceDiagram
         F->>E: ⛔ nftables ban
         F->>A: ban in fail2ban.sqlite3
         A->>A: 🚫 ban alert
-        U-xE: dropped
+        U-xE: rejected
     end
 ```
 
@@ -264,7 +264,7 @@ just sso-check              # validate SSO settings and print the redirect URI
 |---|---|---|
 | `just lint`, `just test` | ruff and the alerter's unit tests | ✅ |
 | `just test-filter` | The fail2ban regex against sample Traefik lines: 4xx boundaries, IPv6, spoofing | ✅ |
-| `just test-ban` | A client gets banned, is then dropped, stays dropped across a Traefik restart, gets back in after unban | ✅ |
+| `just test-ban` | A client gets banned, is then blocked, stays blocked across a Traefik restart, gets back in after unban | ✅ |
 | `just test-unban` | The dashboard unban path and its guards (login, CSRF, jail allowlist) | ✅ |
 | `just test-sso` | Login flow with a mock IdP for both SSO modes, header spoofing, misconfiguration | ✅ |
 | `just bench` | CPU, memory and filter cost ([performance](docs/performance.md)) | |

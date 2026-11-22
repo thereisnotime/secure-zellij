@@ -826,3 +826,64 @@ def test_request_unban_times_out(tmp_path, monkeypatch):
     res = asyncio.run(a.request_unban("traefik-zellij", "203.0.113.9"))
     assert "fail2ban-unban container" in res["error"]
     assert list(tmp_path.iterdir()) == []  # request withdrawn
+
+
+# ── backfill dedup ────────────────────────────────────────────────────────────
+
+
+def test_restart_does_not_duplicate_connections(tmp_path, monkeypatch):
+    import sqlite3
+
+    db = tmp_path / "stats.db"
+    log = tmp_path / "access.log"
+    entry = {
+        "ClientAddr": "198.51.100.5:4000",
+        "DownstreamStatus": 0,
+        "RequestPath": "/ws/terminal/main",
+        "StartUTC": "2026-11-23T10:00:00.123456789Z",
+        "request_User-Agent": "Firefox",
+    }
+    log.write_text(
+        json.dumps(entry) + "\n" + json.dumps({**entry, "StartUTC": "2026-11-23T10:05:00Z"}) + "\n"
+    )
+    monkeypatch.setattr(a, "DB_PATH", str(db))
+    for _ in range(3):  # three alerter starts replaying the same log
+        a.init_db()
+        a._backfill(str(log))
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM connections").fetchone()[0] == 2
+
+
+def test_existing_duplicates_are_removed_on_start(tmp_path, monkeypatch):
+    import sqlite3
+
+    db = tmp_path / "stats.db"
+    with sqlite3.connect(db) as conn:  # a database inflated by restarts before the fix
+        conn.execute(
+            "CREATE TABLE connections (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,"
+            " ip TEXT NOT NULL, session TEXT NOT NULL DEFAULT '',"
+            " user_agent TEXT NOT NULL DEFAULT '', path TEXT NOT NULL DEFAULT '')"
+        )
+        for _ in range(7):
+            conn.execute(
+                "INSERT INTO connections (ts, ip, path) VALUES ('t1', '1.1.1.1', '/ws/terminal')"
+            )
+        conn.execute(
+            "INSERT INTO connections (ts, ip, path) VALUES ('t2', '1.1.1.1', '/ws/terminal')"
+        )
+    monkeypatch.setattr(a, "DB_PATH", str(db))
+    a.init_db()
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM connections").fetchone()[0] == 2
+
+
+def test_validate_config_accepts_ban_fields(capsys):
+    original = a.WEBHOOK_BODY_TEMPLATE
+    a.WEBHOOK_BODY_TEMPLATE = (
+        '{{"text": "{event} {client_ip} {jail} {bantime} {failures} {unbanned_by}"}}'
+    )
+    try:
+        a._validate_config()
+    finally:
+        a.WEBHOOK_BODY_TEMPLATE = original
+    assert capsys.readouterr().err == ""

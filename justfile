@@ -222,7 +222,7 @@ selinux-check:
         done
     fi
     echo; echo "Containers:"
-    for c in traefik fail2ban fail2ban-unban alerter oauth2-proxy; do
+    for c in edge traefik fail2ban fail2ban-unban alerter oauth2-proxy; do
         n=secure-zellij-$c
         podman container exists "$n" 2>/dev/null || continue
         printf '  %-16s %-10s %-10s %s\n' "$c" \

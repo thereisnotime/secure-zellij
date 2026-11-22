@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Tails Traefik JSON access logs and fires alerts on successful zellij connections.
+Alerts and stats for secure-zellij.
 
-A "connection" is detected by HTTP 101 (WebSocket upgrade) — the handshake
-zellij's web terminal uses. Each event ships to all configured destinations:
-Telegram bot and/or a list of generic webhook URLs.
+Tails Traefik's JSON access log. A terminal session shows up there as
+DownstreamStatus 0 (Traefik hands the WebSocket over and logs it when it
+closes); each one is stored for the dashboard and sent as a connection alert.
+Also polls fail2ban's database for new bans, and handles unbans from the
+dashboard through the fail2ban-unban helper. Alerts go to Telegram, Discord
+and any number of webhooks.
 
-Also serves a live stats dashboard on STATS_PORT (default 8083).
+Serves the stats dashboard on STATS_PORT (default 8083).
 """
 
 import asyncio
@@ -31,8 +34,8 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 WEBHOOK_URLS = [u.strip() for u in os.environ.get("WEBHOOK_URLS", "").split(",") if u.strip()]
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 # Traefik logs WebSocket connections as DownstreamStatus=0 (hijacked connections
-# don't carry a status code through the proxy layer). Set to 0 to alert on
-# every terminal session close, or leave at 101 to effectively disable alerts.
+# don't carry a status code through the proxy layer), when the connection closes.
+# 0 alerts on every terminal session; another value alerts on that status instead.
 ALERT_ON_STATUS = int(os.environ.get("ALERT_ON_STATUS", "0"))
 WEBHOOK_BODY_TEMPLATE = os.environ.get("WEBHOOK_BODY_TEMPLATE", "")
 ALERT_COOLDOWN_SECONDS = int(os.environ.get("ALERT_COOLDOWN_SECONDS", "60"))
@@ -322,6 +325,15 @@ def init_db() -> None:
                 user_agent  TEXT NOT NULL DEFAULT ''
             )
         """)
+        # One row per connection. The log is replayed on every start (_backfill), and
+        # before this index each restart added every connection again.
+        conn.execute(
+            "DELETE FROM connections WHERE id NOT IN"
+            " (SELECT MIN(id) FROM connections GROUP BY ts, ip, path)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_conn_unique ON connections(ts, ip, path)"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ts ON connections(ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_ip ON connections(ip)")
         conn.commit()
@@ -344,7 +356,7 @@ def store_event(
         ts = datetime.now(UTC).isoformat()
     with _db_lock, sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT INTO connections (ts, ip, session, user_agent, path, sso_user)"
+            "INSERT OR IGNORE INTO connections (ts, ip, session, user_agent, path, sso_user)"
             " VALUES (?,?,?,?,?,?)",
             (ts, ip, session, user_agent, path, sso_user),
         )
@@ -932,6 +944,11 @@ def _validate_config() -> None:
         "service": "s",
         "sso_user": "alice",
         "sso_email": "alice@example.com",
+        # ban and unban events add these
+        "jail": "traefik-zellij",
+        "bantime": "3600",
+        "failures": "10",
+        "unbanned_by": "admin",
     }
     try:
         rendered = WEBHOOK_BODY_TEMPLATE.format(**dummy)

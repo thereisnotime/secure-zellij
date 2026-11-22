@@ -25,7 +25,7 @@ just lint          # ruff check + format check (alerter, unban helper)
 just test          # alerter unit tests
 just validate      # compose.yaml parses, with and without the sso profile
 just test-filter   # fail2ban regex against sample log lines
-just test-ban      # a ban really drops the client
+just test-ban      # a ban really blocks the client
 just test-unban    # dashboard unban path and guards
 just test-sso      # SSO login flows with a mock IdP
 shellcheck -x traefik/entrypoint.sh tests/*.sh

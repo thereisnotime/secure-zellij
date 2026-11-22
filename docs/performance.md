@@ -68,7 +68,7 @@ Before the `edge` namespace, Traefik ran on the host network and fail2ban
 couldn't actually block anyone (rootless podman has no access to the host
 firewall). Real bans cost this much, measured with the same benchmark:
 
-| | Host network (bans didn't block) | edge namespace (bans drop packets) |
+| | Host network (bans didn't block) | edge namespace (bans block) |
 |---|---|---|
 | CPU at 20 req/s | 19.5% | 21.7% (+2.2, mostly pasta) |
 | CPU in the burst | 189% | 222% (+33: pasta 20, Traefik 12) |
