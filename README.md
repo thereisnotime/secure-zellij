@@ -293,6 +293,7 @@ just test-sso       # SSO end-to-end test with a mock IdP
 | [Log Rotation](docs/log-rotation.md) | Logrotate setup, portable install |
 | [Multi-domain & LAN Access](docs/multi-domain.md) | EXTRA_DOMAINS, LAN IP, local DNS, tunnels |
 | [Systemd Service](docs/systemd.md) | Auto-start on login or boot |
+| [Performance](docs/performance.md) | CPU, memory and disk use; fail2ban filter benchmark |
 
 ## Project Structure
 
