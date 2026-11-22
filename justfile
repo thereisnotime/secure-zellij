@@ -202,6 +202,36 @@ test-filter:
 test-unban:
     tests/unban-e2e.sh
 
+# SELinux mode, labels of mounted paths, container labels and health (docs/selinux.md)
+selinux-check:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    mode=$(getenforce 2>/dev/null || echo "not installed")
+    echo "SELinux: $mode"
+    if [ "$mode" != "not installed" ] && [ "$mode" != Disabled ]; then
+        echo; echo "Mounted repo paths (want container_file_t after the first start):"
+        for p in traefik/traefik.yml traefik/dynamic traefik/entrypoint.sh traefik/sso \
+                 fail2ban/filter.d fail2ban/jail.d fail2ban/unban-helper.py; do
+            label=$(ls -dZ "$p" | awk '{print $1}')
+            case "$label" in *container_file_t*) ok=ok ;; *) ok="NOT RELABELLED (missing :z?)" ;; esac
+            printf '  %-28s %s  %s\n' "$p" "$label" "$ok"
+        done
+    fi
+    echo; echo "Containers:"
+    for c in traefik fail2ban fail2ban-unban alerter oauth2-proxy; do
+        n=secure-zellij-$c
+        podman container exists "$n" 2>/dev/null || continue
+        printf '  %-16s %-10s %-10s %s\n' "$c" \
+            "$(podman inspect "$n" --format '{{{{.State.Status}}')" \
+            "$(podman inspect "$n" --format '{{{{if .State.Health}}{{{{.State.Health.Status}}{{{{else}}-{{{{end}}')" \
+            "$(podman inspect "$n" --format '{{{{.ProcessLabel}}')"
+    done
+    echo; printf 'fail2ban socket: '
+    podman exec secure-zellij-fail2ban-unban fail2ban-client ping 2>&1 | tail -1 || true
+    if [ "$mode" = Enforcing ] || [ "$mode" = Permissive ]; then
+        echo; echo "Denials, if any: sudo ausearch -m AVC -ts recent | audit2why"
+    fi
+
 # Benchmarks from docs/performance.md in throwaway containers: all, stack or filter
 bench what="all":
     tests/bench.sh {{ what }}

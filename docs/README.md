@@ -10,5 +10,6 @@
 | [Log Rotation](log-rotation.md) | Rotating the Traefik access log with logrotate |
 | [SSO](sso.md) | Authelia, Keycloak, Authentik login in front of zellij |
 | [Fail2ban](fail2ban.md) | Auto-ban IPs with repeated 4xx responses |
+| [SELinux](selinux.md) | Labels on mounts, checking, enforcing-mode hosts |
 | [Performance](performance.md) | CPU, memory and disk use; fail2ban filter benchmark |
 | [IP Allowlist](ip-allowlist.md) | Restrict access to specific IPs/CIDRs via Traefik |

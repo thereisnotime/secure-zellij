@@ -6,10 +6,10 @@ services:
     network_mode: host
     entrypoint: ["/entrypoint.sh"]
     volumes:
-      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./traefik/dynamic:/etc/traefik/dynamic:ro
-      - ./traefik/entrypoint.sh:/entrypoint.sh:ro
-      - ./traefik/sso:/etc/traefik/sso:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro,z
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro,z
+      - ./traefik/entrypoint.sh:/entrypoint.sh:ro,z
+      - ./traefik/sso:/etc/traefik/sso:ro,z
       - traefik-logs:/var/log/traefik
       - letsencrypt:/letsencrypt
     environment:
@@ -78,8 +78,8 @@ services:
       - NET_RAW
     volumes:
       - traefik-logs:/var/log/traefik:ro
-      - ./fail2ban/filter.d:/data/filter.d:ro
-      - ./fail2ban/jail.d:/data/jail.d:ro
+      - ./fail2ban/filter.d:/data/filter.d:ro,z
+      - ./fail2ban/jail.d:/data/jail.d:ro,z
       - fail2ban-data:/data/db
       # control socket, shared with fail2ban-unban only. :z relabels the tmpfs for
       # SELinux; without it fail2ban can't create the socket and quietly stops banning
@@ -112,8 +112,16 @@ services:
     security_opt:
       - no-new-privileges:true
     entrypoint: ["python3", "-I", "/unban-helper.py"]
+    # unhealthy when fail2ban's control socket can't be reached (fail2ban down,
+    # or an SELinux label keeping this container out of the shared volume)
+    healthcheck:
+      test: ["CMD", "fail2ban-client", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     volumes:
-      - ./fail2ban/unban-helper.py:/unban-helper.py:ro
+      - ./fail2ban/unban-helper.py:/unban-helper.py:ro,z
       - fail2ban-run:/var/run/fail2ban:z
       - unban-requests:/requests:z
     environment:
