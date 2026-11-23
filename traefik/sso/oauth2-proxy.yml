@@ -39,3 +39,5 @@ http:
         servers:
           - url: "http://127.0.0.1:SSO_PROXY_PORT"
         passHostHeader: true
+        # Defined in routers.yml: no keep-alive across pasta's loopback forwarding
+        serversTransport: host-loopback

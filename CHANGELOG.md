@@ -6,6 +6,14 @@ Notable changes to secure-zellij. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Picking a session in the web client failed with a random `502 Bad Gateway`.
+  Traefik reused keep-alive connections to zellij across pasta's loopback
+  forwarding that were already dead, and Go doesn't retry a `POST` on a fresh
+  one. Traefik now opens a new connection per request to the host backends
+  (zellij, the alerter, oauth2-proxy).
+
 ## [1.0.0] - 2026-11-23
 
 First tagged release. Everything before it was on `main` only.

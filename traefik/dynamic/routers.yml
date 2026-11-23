@@ -35,6 +35,15 @@ http:
         - stats-strip
       tls: {}
 
+  # Backends on the host are reached through pasta's -T loopback forwarding.
+  # Keep-alive connections across it can be dead by the time Traefik reuses
+  # them; Go retries those for GET but not for POST, so requests like zellij's
+  # POST /session failed with a random 502. A new connection per request avoids
+  # that and costs nothing on loopback. WebSockets are unaffected.
+  serversTransports:
+    host-loopback:
+      maxIdleConnsPerHost: -1
+
   services:
     noop:
       loadBalancer:
@@ -45,9 +54,11 @@ http:
         servers:
           - url: "http://127.0.0.1:8082"
         passHostHeader: true
+        serversTransport: host-loopback
 
     stats:
       loadBalancer:
         servers:
           - url: "http://127.0.0.1:8083"
         passHostHeader: true
+        serversTransport: host-loopback
