@@ -114,6 +114,8 @@ services:
     environment:
       - TZ=${TZ:-UTC}
       - F2B_LOG_LEVEL=${F2B_LOG_LEVEL:-INFO}
+      # ban history for bantime.increment (the image's default is 1d)
+      - F2B_DB_PURGE_AGE=${F2B_DB_PURGE_AGE:-7d}
     # fail2ban can exit its server and leave the container running; this makes
     # that show up as unhealthy in `podman ps`
     healthcheck:

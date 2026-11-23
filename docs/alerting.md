@@ -307,7 +307,7 @@ The alerter serves a dashboard at `https://<DOMAIN>/stats/` (add `:<HTTPS_PORT>`
 | Recent Connections | the last 50: time, SSO user (SSO only), IP, session, user agent |
 | fail2ban Bans | time, SSO user (SSO only), IP, jail, failures, the last request that counted, and the status: *banned until ...*, *expired* or *unbanned by &lt;user&gt; at ...* |
 
-The bans table reads fail2ban's database directly, so it lists every ban fail2ban still keeps (`dbpurgeage`, 1 day by default), including ones from before the alerter started. Unbans are kept in the alerter's own `stats.db`, because fail2ban deletes a ban once it's lifted. `BAN_ALERTS=false` only stops the notifications; the bans section stays. Active bans have an **unban** button, see [Fail2ban: unbanning from the dashboard](fail2ban.md#unbanning-from-the-dashboard).
+The bans table reads fail2ban's database directly, so it lists every ban fail2ban still keeps (`F2B_DB_PURGE_AGE`, 7 days by default), including ones from before the alerter started. Unbans are kept in the alerter's own `stats.db`, because fail2ban deletes a ban once it's lifted. `BAN_ALERTS=false` only stops the notifications; the bans section stays. Active bans have an **unban** button, see [Fail2ban: unbanning from the dashboard](fail2ban.md#unbanning-from-the-dashboard).
 
 Access control:
 

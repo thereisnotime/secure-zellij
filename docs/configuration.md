@@ -84,6 +84,7 @@ Thresholds (`maxretry`, `findtime`, `bantime`) are in
 | Variable | Default | Description |
 |---|---|---|
 | `F2B_LOG_LEVEL` | `INFO` | fail2ban log level: `CRITICAL`, `ERROR`, `WARNING`, `NOTICE`, `INFO` or `DEBUG`. |
+| `F2B_DB_PURGE_AGE` | `7d` | How long fail2ban keeps ban history. Repeat bans grow from it (`bantime.increment`), and the dashboard lists bans this far back. |
 
 ## SSO
 

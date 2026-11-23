@@ -120,7 +120,9 @@ All thresholds are in `fail2ban/jail.d/traefik-zellij.conf`:
 |---|---|---|
 | `maxretry` | `10` | 4xx responses within `findtime` that trigger a ban |
 | `findtime` | `60` | sliding window in seconds |
-| `bantime` | `3600` | ban duration in seconds (1 hour); a negative value bans permanently |
+| `bantime` | `3600` | first ban's duration in seconds (1 hour); a negative value bans permanently |
+| `bantime.increment` | `true` | repeat offenders get longer bans: 1h, 2h, 4h, ... (doubling per earlier ban in the history) |
+| `bantime.maxtime` | `604800` | longest ban the increment can reach (1 week) |
 | `action` | `nftables-allports[name=traefik-zellij]` | ban action, see [Where the ban happens](#where-the-ban-happens) |
 
 To never ban certain addresses, e.g. your office network, add an `ignoreip` line to the jail:
@@ -128,6 +130,8 @@ To never ban certain addresses, e.g. your office network, add an `ignoreip` line
 ```ini
 ignoreip = 127.0.0.1/8 ::1 192.0.2.0/24
 ```
+
+The increment works off fail2ban's ban history, which it keeps for `F2B_DB_PURGE_AGE` (default `7d`, set in `.env`). An unban from the dashboard or `just fail2ban-unban` deletes that IP's history, so its next ban starts at one hour again.
 
 Apply changes with `podman compose restart fail2ban`.
 
