@@ -24,7 +24,7 @@ services:
     entrypoint: ["sh", "-c", "trap 'exit 0' TERM INT; while :; do sleep 3600 & wait $$!; done"]
 
   traefik:
-    image: docker.io/library/traefik:v3.7.19
+    image: docker.io/library/traefik:v3.8.0
     container_name: secure-zellij-traefik
     restart: unless-stopped
     network_mode: "service:edge"
